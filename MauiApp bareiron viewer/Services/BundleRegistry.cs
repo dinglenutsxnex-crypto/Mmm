@@ -94,6 +94,12 @@ internal sealed class BundleSlot
         finally { _lock.Release(); }
     }
 
+    public void Release()
+    {
+        _lock.Wait();
+        try { OpenFiles = Array.Empty<AssetsFileInstance?>(); OpenManager = null; }
+        finally { _lock.Release(); }
+    }
 }
 
 /// <summary>

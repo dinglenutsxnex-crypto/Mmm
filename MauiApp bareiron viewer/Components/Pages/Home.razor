@@ -1192,24 +1192,16 @@
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
-            try
+            await Task.Run(async () =>
             {
-                await Task.Run(async () =>
+                foreach (var (displayName, documentUri) in safFiles)
                 {
-                    foreach (var (displayName, tmpPath) in safFiles)
-                    {
-                        _registry.ScanFile(tmpPath, displayName, safUri: safUri);
-                        _loadDone++;
-                        if (_loadDone % 5 == 0)
-                            await InvokeAsync(StateHasChanged);
-                    }
-                });
-            }
-            finally
-            {
-                var tempPaths = safFiles.Select(f => f.TempPath).ToList();
-                AndroidDownloadService.CleanupTempFiles(tempPaths);
-            }
+                    _registry.ScanFile(displayName, displayName, safUri: documentUri);
+                    _loadDone++;
+                    if (_loadDone % 5 == 0)
+                        await InvokeAsync(StateHasChanged);
+                }
+            });
 #else
             string? folderPath = null;
 #if WINDOWS
