@@ -1183,7 +1183,7 @@
             if (safUri == null) { loading = false; return; }
 
             var folderName = System.IO.Path.GetFileName(safUri.TrimEnd('/')) is { Length: > 0 } n ? n : "folder";
-            bundleFileName = $"📁 {folderName}";
+            bundleFileName = $" {folderName}";
             StateHasChanged();
 
             List<(string DisplayName, string TempPath)> safFiles = new();
@@ -1218,7 +1218,7 @@
 #endif
             if (string.IsNullOrEmpty(folderPath)) { loading = false; return; }
 
-            bundleFileName = $"📁 {System.IO.Path.GetFileName(folderPath)}";
+            bundleFileName = $" {System.IO.Path.GetFileName(folderPath)}";
             var files = Directory.GetFiles(folderPath);
             _loadTotal = files.Length;
             StateHasChanged();
