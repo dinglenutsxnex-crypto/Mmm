@@ -17,7 +17,7 @@ namespace MauiApp_bareiron_viewer
             {
                 Window?.SetDecorFitsSystemWindows(false);
                 Window?.InsetsController?.Hide(WindowInsets.Type.StatusBars() | WindowInsets.Type.NavigationBars());
-                Window?.InsetsController?.SystemBarsBehavior = WindowInsetsControllerBehavior.ShowTransientBarsBySwipe;
+                Window?.InsetsController?.SystemBarsBehavior = (int)WindowInsetsControllerBehavior.ShowTransientBarsBySwipe;
             }
             else
             {
