@@ -117,15 +117,111 @@
 
         window.PanelResize = {
             _bound: false,
+            _resizeObs: null,
+            _mutObs: null,
+            _contentObs: null,
+
+            // Recalculate col-name / col-pathid widths based on current panel width
+            // and which columns are currently visible.
+            //
+            // Layout budget:
+            //   usable = panelWidth - 8 (scrollbar) - 110 (type) - [65 (size) if visible]
+            //
+            // When pathid is visible the usable space is split:
+            //   name  → min(NAME_MAX, 62 % of usable)   — hard cap at ~37 chars
+            //   pathid → remainder (min 55 px)
+            //
+            // When pathid is hidden name gets all the usable space (no cap needed).
+            updateTableCols: function () {
+                const panel = document.querySelector('.bi-assets-panel');
+                const table = document.querySelector('.bi-table');
+                if (!panel || !table) return;
+
+                var panelW   = panel.offsetWidth;
+                var TYPE_W   = 110;
+                var SIZE_W   = 65;
+                var SCROLL_W = 8;
+                var NAME_MAX = 259; // ≈ 37 chars × 7 px  (Segoe UI 12 px)
+
+                var sizeHeader = table.querySelector('th.col-size');
+                var pathHeader = table.querySelector('th.col-pathid');
+
+                var sizeHidden = !sizeHeader || sizeHeader.classList.contains('col-hidden');
+                var pathHidden = !pathHeader || pathHeader.classList.contains('col-hidden');
+
+                var usable = Math.max(60, panelW - SCROLL_W - TYPE_W - (sizeHidden ? 0 : SIZE_W));
+
+                if (!pathHidden) {
+                    var nameW = Math.min(NAME_MAX, Math.round(usable * 0.62));
+                    var pathW = Math.max(55, usable - nameW);
+                    table.style.setProperty('--col-name-w',   nameW + 'px');
+                    table.style.setProperty('--col-pathid-w', pathW + 'px');
+                } else {
+                    // pathid hidden — name takes everything, no artificial cap
+                    table.style.removeProperty('--col-name-w');
+                    table.style.removeProperty('--col-pathid-w');
+                }
+            },
+
+            // Wire up observers so column widths stay correct after:
+            //   • panel drag-resize
+            //   • View-menu toggles (adds/removes col-hidden class)
+            //   • File load (table appears for the first time)
+            setupObservers: function () {
+                var PR = window.PanelResize;
+
+                // ResizeObserver: reacts to panel width changes (includes drag)
+                if (window.ResizeObserver && !PR._resizeObs) {
+                    var panel = document.querySelector('.bi-assets-panel');
+                    if (panel) {
+                        PR._resizeObs = new ResizeObserver(function () { PR.updateTableCols(); });
+                        PR._resizeObs.observe(panel);
+                    }
+                }
+
+                // MutationObserver: reacts to col-hidden class being toggled on <th>
+                if (window.MutationObserver && !PR._mutObs) {
+                    var table = document.querySelector('.bi-table');
+                    if (table) {
+                        PR._mutObs = new MutationObserver(function () { PR.updateTableCols(); });
+                        PR._mutObs.observe(table, { subtree: true, attributes: true, attributeFilter: ['class'] });
+                    }
+                }
+
+                // MutationObserver: reacts to the table being inserted when a file is loaded
+                if (window.MutationObserver && !PR._contentObs) {
+                    var wrap = document.getElementById('bi-table-wrap');
+                    if (wrap) {
+                        PR._contentObs = new MutationObserver(function () {
+                            // Re-attach _mutObs to newly-rendered table if needed
+                            if (!PR._mutObs) {
+                                var t = document.querySelector('.bi-table');
+                                if (t) {
+                                    PR._mutObs = new MutationObserver(function () { PR.updateTableCols(); });
+                                    PR._mutObs.observe(t, { subtree: true, attributes: true, attributeFilter: ['class'] });
+                                }
+                            }
+                            PR.updateTableCols();
+                        });
+                        PR._contentObs.observe(wrap, { childList: true });
+                    }
+                }
+
+                PR.updateTableCols();
+            },
+
             init: function () {
                 if (window.PanelResize._bound) return;
                 const drag = document.getElementById('bi-drag');
                 if (!drag) return;
                 window.PanelResize._bound = true;
 
+                var PR = window.PanelResize;
                 let dragging = false;
                 let startX = 0;
                 let startW = 0;
+
+                PR.setupObservers();
 
                 drag.addEventListener('mousedown', function (e) {
                     e.preventDefault();
@@ -145,6 +241,7 @@
                     const newW = Math.max(150, Math.min(startW + (e.clientX - startX), window.innerWidth - 200));
                     panel.style.width = newW + 'px';
                     panel.style.flexShrink = '0';
+                    PR.updateTableCols();
                 });
 
                 document.addEventListener('mouseup', function () {
@@ -170,6 +267,7 @@
                     const newW = Math.max(150, Math.min(startW + (e.touches[0].clientX - startX), window.innerWidth - 200));
                     panel.style.width = newW + 'px';
                     panel.style.flexShrink = '0';
+                    PR.updateTableCols();
                 }, { passive: false });
 
                 document.addEventListener('touchend', function () {
