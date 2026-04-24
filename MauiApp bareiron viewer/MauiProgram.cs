@@ -27,33 +27,33 @@ namespace MauiApp_bareiron_viewer
 
             return builder.Build();
         }
-    }
 
 #if ANDROID
-    private static void RequestStoragePermission()
-    {
-        var activity = Android.App.Application.Context as Android.App.Activity;
-        if (activity == null) return;
-
-        if (Android.OS.Environment.IsExternalStorageManager)
-            return;
-
-        if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.R)
+        private static void RequestStoragePermission()
         {
-            var intent = new Android.Content.Intent(
-                Android.Provider.Settings.ActionManageAppAllFilesAccessPermission,
-                Android.Net.Uri.Parse("package:" + activity.PackageName));
-            activity.StartActivity(intent);
+            var activity = Android.App.Application.Context as Android.App.Activity;
+            if (activity == null) return;
+
+            if (Android.OS.Environment.IsExternalStorageManager)
+                return;
+
+            if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.R)
+            {
+                var intent = new Android.Content.Intent(
+                    Android.Provider.Settings.ActionManageAppAllFilesAccessPermission,
+                    Android.Net.Uri.Parse("package:" + activity.PackageName));
+                activity.StartActivity(intent);
+            }
+            else
+            {
+                activity.RequestPermissions(
+                    new[] {
+                        Android.Manifest.Permission.ReadExternalStorage,
+                        Android.Manifest.Permission.WriteExternalStorage
+                    },
+                    0);
+            }
         }
-        else
-        {
-            activity.RequestPermissions(
-                new[] {
-                    Android.Manifest.Permission.ReadExternalStorage,
-                    Android.Manifest.Permission.WriteExternalStorage
-                },
-                0);
-        }
-    }
 #endif
+    }
 }
