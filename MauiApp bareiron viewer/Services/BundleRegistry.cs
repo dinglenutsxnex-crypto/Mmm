@@ -61,21 +61,30 @@ internal sealed class BundleSlot
         {
             if (OpenManager == null)
             {
-                string path = FilePath;
 #if ANDROID
-                if (!File.Exists(path) && SafUri != null)
+                if (SafUri != null)
                 {
-                    path     = await Task.Run(() => ReCopyFromSaf(SafUri));
-                    FilePath = path;
+                    OpenManager = new AssetsManager();
+                    using var stream = AndroidDownloadService.OpenSafStream(SafUri);
+                    var bundle = OpenManager.LoadBundleFile(stream, FilePath);
+                    int count  = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
+                    OpenFiles  = new AssetsFileInstance?[count];
+                    for (int i = 0; i < count; i++)
+                    {
+                        try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundle, i); }
+                        catch { }
+                    }
+                    return subFileIndex >= 0 && subFileIndex < OpenFiles.Length
+                        ? OpenFiles[subFileIndex] : null;
                 }
 #endif
                 OpenManager = new AssetsManager();
-                var bundle  = OpenManager.LoadBundleFile(path);
-                int count   = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
-                OpenFiles   = new AssetsFileInstance?[count];
-                for (int i = 0; i < count; i++)
+                var bundleFile = OpenManager.LoadBundleFile(FilePath);
+                int fileCount  = bundleFile.file.BlockAndDirInfo.DirectoryInfos.Count;
+                OpenFiles      = new AssetsFileInstance?[fileCount];
+                for (int i = 0; i < fileCount; i++)
                 {
-                    try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundle, i); }
+                    try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundleFile, i); }
                     catch { }
                 }
             }
@@ -85,28 +94,6 @@ internal sealed class BundleSlot
         finally { _lock.Release(); }
     }
 
-    public void Release()
-    {
-        _lock.Wait();
-        try { OpenFiles = Array.Empty<AssetsFileInstance?>(); OpenManager = null; }
-        finally { _lock.Release(); }
-    }
-
-#if ANDROID
-    private static int _reCopyCounter;
-    private static string ReCopyFromSaf(string safUri)
-    {
-        var uri      = Android.Net.Uri.Parse(safUri)!;
-        var resolver = Android.App.Application.Context.ContentResolver!;
-        var idx      = Interlocked.Increment(ref _reCopyCounter);
-        var tmp      = Path.Combine(
-            Android.App.Application.Context.CacheDir!.AbsolutePath, $"saf_{idx}");
-        using var ins  = resolver.OpenInputStream(uri)!;
-        using var outs = File.Create(tmp);
-        ins.CopyTo(outs);
-        return tmp;
-    }
-#endif
 }
 
 /// <summary>
@@ -148,18 +135,40 @@ public sealed class BundleRegistry : IDisposable
             bool any = false;
             try
             {
-                var bundle = mgr.LoadBundleFile(filePath);
-                var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                for (int i = 0; i < dirs.Count; i++)
+#if ANDROID
+                if (safUri != null)
                 {
-                    try
+                    using var stream = AndroidDownloadService.OpenSafStream(safUri);
+                    var bundle = mgr.LoadBundleFile(stream, filePath);
+                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                    for (int i = 0; i < dirs.Count; i++)
                     {
-                        var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                        if (af?.file?.AssetInfos == null) continue;
-                        ScanSubFile(af, mgr, slotIndex, i);
-                        any = true;
+                        try
+                        {
+                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                            if (af?.file?.AssetInfos == null) continue;
+                            ScanSubFile(af, mgr, slotIndex, i);
+                            any = true;
+                        }
+                        catch { }
                     }
-                    catch { }
+                }
+                else
+#endif
+                {
+                    var bundle = mgr.LoadBundleFile(filePath);
+                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                    for (int i = 0; i < dirs.Count; i++)
+                    {
+                        try
+                        {
+                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                            if (af?.file?.AssetInfos == null) continue;
+                            ScanSubFile(af, mgr, slotIndex, i);
+                            any = true;
+                        }
+                        catch { }
+                    }
                 }
             }
             catch (Exception bundleEx)

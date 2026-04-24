@@ -1186,7 +1186,7 @@
             bundleFileName = $" {folderName}";
             StateHasChanged();
 
-            List<(string DisplayName, string TempPath)> safFiles = new();
+            List<(string DisplayName, string DocumentUri)> safFiles = new();
             await Task.Run(() => safFiles = AndroidDownloadService.GetFilesFromSafUri(safUri));
 
             _loadTotal = safFiles.Count;
@@ -1194,9 +1194,9 @@
 
             await Task.Run(async () =>
             {
-                foreach (var (displayName, tmpPath) in safFiles)
+                foreach (var (displayName, documentUri) in safFiles)
                 {
-                    _registry.ScanFile(tmpPath, displayName, safUri: null);
+                    _registry.ScanFile(displayName, displayName, safUri: documentUri);
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
