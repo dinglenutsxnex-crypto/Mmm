@@ -1,0 +1,234 @@
+@* VirtualTable.razor — renders only visible rows + 50 buffer each side.
+   Uses fixed 28px row height — zero DOM measurement needed.
+   JS bridge fires NotifyScroll(scrollTop, viewportHeight) on scroll. *@
+
+@using MauiApp_bareiron_viewer.Services
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<style>
+    .vt-wrap {
+        flex: 1;
+        /* overflow-y: scroll (not auto) — keeps scrollbar track always visible so user
+           can see their position in the list. 'auto' hides it until hover which on Android
+           means it's never visible. */
+        overflow-y: scroll;
+        overflow-x: hidden;
+        /* Disable iOS/Android rubber-band momentum on the container itself.
+           We want the browser's native scroll inertia on the inner div, but NOT
+           a second layer of it from the parent. */
+        overscroll-behavior: contain;
+        /* Show a thin scrollbar so position hint is always visible */
+        scrollbar-width: thin;
+        scrollbar-color: rgba(120,120,120,0.5) transparent;
+    }
+    .vt-wrap::-webkit-scrollbar       { width: 4px; }
+    .vt-wrap::-webkit-scrollbar-track { background: transparent; }
+    .vt-wrap::-webkit-scrollbar-thumb { background: rgba(120,120,120,0.5); border-radius: 2px; }
+
+    /* Prevent table rows from capturing scroll — rows should let scroll pass through */
+    .vt-wrap tr {
+        touch-action: pan-y;
+    }
+</style>
+
+<div id="@_containerId" class="vt-wrap">
+
+    @* top spacer *@
+    <div style="height:@(_topSpacerPx)px; flex-shrink:0;"></div>
+
+    <table class="bi-table" style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+        <thead>
+            <tr>
+                <th class="col-pathid @(!ShowPathId  ? "col-hidden" : "")">Path ID</th>
+                <th class="col-type">Type</th>
+                <th class="col-name">Name</th>
+                <th class="col-size @(!ShowSize ? "col-hidden" : "")">Size</th>
+            </tr>
+        </thead>
+        <tbody>
+            @for (int i = _visStart; i < _visEnd; i++)
+            {
+                var idx = i; // capture for lambda
+                var a   = Items[idx];
+                bool sel = SelectedPathId == a.PathId && SelectedBundleSlot == a.BundleSlot;
+                <tr class="@(sel ? "selected" : "")"
+                    @onclick="@(() => OnRowClick(idx))"
+                    @oncontextmenu:preventDefault
+                    @oncontextmenu="@(e => OnRowCtx(idx, e))"
+                    @ontouchstart="@(e => OnTouchStart(idx, e))"
+                    @ontouchend="OnTouchEnd"
+                    @ontouchmove="OnTouchMove">
+                    <td class="col-pathid @(!ShowPathId ? "col-hidden" : "")"
+                        style="color:#666; font-family:Consolas,monospace;">@a.PathId</td>
+                    <td class="col-type">
+                        <div class="type-cell">
+                            @if (ShowColorCode)
+                            {
+                                <div class="type-dot" style="background:@GetTypeColor(a.Type)"></div>
+                            }
+                            @a.Type
+                        </div>
+                    </td>
+                    <td class="col-name">@(string.IsNullOrEmpty(a.Name) ? "(unnamed)" : a.Name)</td>
+                    <td class="col-size @(!ShowSize ? "col-hidden" : "")"
+                        style="color:#666; font-family:Consolas,monospace;">@FormatSize(a.ByteSize)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @* bottom spacer *@
+    <div style="height:@(_botSpacerPx)px; flex-shrink:0;"></div>
+
+</div>
+
+@code {
+    // ── Parameters ────────────────────────────────────────────────────────────
+    [Parameter] public IReadOnlyList<AssetDescriptor> Items             { get; set; } = Array.Empty<AssetDescriptor>();
+    [Parameter] public long                            SelectedPathId    { get; set; }
+    [Parameter] public int                             SelectedBundleSlot{ get; set; } = -1;
+    [Parameter] public bool                            ShowPathId        { get; set; }
+    [Parameter] public bool                            ShowSize          { get; set; }
+    [Parameter] public bool                            ShowColorCode     { get; set; } = true;
+    [Parameter] public EventCallback<int>              OnSelect          { get; set; }
+    [Parameter] public EventCallback<(int Index, MouseEventArgs E)> OnContext { get; set; }
+
+    // ── Constants ─────────────────────────────────────────────────────────────
+    private const int RowHeight = 28;
+    private const int Buffer    = 50;
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    private readonly string _containerId = $"vt-{Guid.NewGuid():N}";
+    private DotNetObjectReference<VirtualTable>? _selfRef;
+    private bool _jsAttached = false;
+
+    private int _visStart    = 0;
+    private int _visEnd      = 100; // show first 100 rows before JS fires
+    private int _topSpacerPx = 0;
+    private int _botSpacerPx = 0;
+    private int _lastCount   = -1;
+    private int _viewportH   = 600;
+    private int _lastScrollTop = 0;
+    private bool _scrollTriggeredRender = false;
+
+    // Long-press
+    private System.Threading.Timer? _lpTimer;
+    private int    _lpIdx;
+    private double _lpX, _lpY;
+    private bool   _lpFired;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    protected override void OnParametersSet()
+    {
+        if (Items.Count != _lastCount)
+        {
+            _lastCount = Items.Count;
+            Recalc(0);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("VirtualTable.attach", _selfRef, _containerId);
+            _jsAttached = true;
+        }
+        else if (_jsAttached && _scrollTriggeredRender)
+        {
+            _scrollTriggeredRender = false;
+            await JS.InvokeVoidAsync("VirtualTable.restoreScroll", _containerId, _lastScrollTop);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_jsAttached)
+        {
+            try { await JS.InvokeVoidAsync("VirtualTable.detach", _containerId); } catch { }
+        }
+        _selfRef?.Dispose();
+        _lpTimer?.Dispose();
+    }
+
+    // ── JS-invokable scroll callback ──────────────────────────────────────────
+    [JSInvokable]
+    public void NotifyScroll(double scrollTop, double viewportHeight)
+    {
+        _viewportH = (int)viewportHeight;
+        _lastScrollTop = (int)scrollTop;
+        _scrollTriggeredRender = true;
+        Recalc((int)scrollTop);
+        StateHasChanged();
+    }
+
+    // ── Core calc ─────────────────────────────────────────────────────────────
+    private void Recalc(int scrollTop)
+    {
+        int total = Items.Count;
+        if (total == 0) { _visStart = _visEnd = _topSpacerPx = _botSpacerPx = 0; return; }
+        int firstVisible = scrollTop / RowHeight;
+        int lastVisible  = (scrollTop + _viewportH) / RowHeight + 1;
+        _visStart    = Math.Max(0,     firstVisible - Buffer);
+        _visEnd      = Math.Min(total, lastVisible  + Buffer);
+        _topSpacerPx = _visStart * RowHeight;
+        _botSpacerPx = (total - _visEnd) * RowHeight;
+    }
+
+    // ── Row events ────────────────────────────────────────────────────────────
+    private async Task OnRowClick(int idx)
+    {
+        if (_lpFired) { _lpFired = false; return; }
+        await OnSelect.InvokeAsync(idx);
+    }
+
+    private async Task OnRowCtx(int idx, MouseEventArgs e)
+        => await OnContext.InvokeAsync((idx, e));
+
+    private void OnTouchStart(int idx, TouchEventArgs e)
+    {
+        _lpFired = false; _lpIdx = idx;
+        _lpX = e.Touches.Length > 0 ? e.Touches[0].ClientX : 0;
+        _lpY = e.Touches.Length > 0 ? e.Touches[0].ClientY : 0;
+        _lpTimer?.Dispose();
+        _lpTimer = new System.Threading.Timer(_ =>
+        {
+            _lpFired = true; _lpTimer = null;
+            InvokeAsync(async () =>
+            {
+                await OnContext.InvokeAsync((_lpIdx, new MouseEventArgs { ClientX = _lpX, ClientY = _lpY }));
+                StateHasChanged();
+            });
+        }, null, 600, System.Threading.Timeout.Infinite);
+    }
+
+    private void OnTouchEnd(TouchEventArgs _)  { _lpTimer?.Dispose(); _lpTimer = null; }
+    private void OnTouchMove(TouchEventArgs _) { _lpTimer?.Dispose(); _lpTimer = null; }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)         return $"{bytes}B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1}K";
+        return $"{bytes / (1024.0 * 1024):F1}M";
+    }
+
+    private static string GetTypeColor(string type) => type switch
+    {
+        "Texture2D"     => "#4ec9b0",
+        "Sprite"        => "#c586c0",
+        "AudioClip"     => "#f0a500",
+        "TextAsset"     => "#9cdcfe",
+        "Mesh"          => "#ce9178",
+        "Material"      => "#569cd6",
+        "MonoBehaviour" => "#4af626",
+        "GameObject"    => "#dcdcaa",
+        "Transform"     => "#888888",
+        "Animator"      => "#f48771",
+        "AnimationClip" => "#f48771",
+        "Shader"        => "#d7ba7d",
+        _               => "#666666"
+    };
+}

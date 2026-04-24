@@ -1,0 +1,67 @@
+name: Build Android AAB
+
+on:
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-android-aab:
+    name: Build Android AAB
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'microsoft'
+          java-version: '21'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Cache MAUI workload
+        id: cache-maui-workload
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Program Files\dotnet\sdk-manifests
+            C:\Program Files\dotnet\packs
+            C:\Program Files\dotnet\metadata
+          key: maui-workload-${{ runner.os }}-${{ env.DOTNET_VERSION }}-v1
+          restore-keys: |
+            maui-workload-${{ runner.os }}-${{ env.DOTNET_VERSION }}-
+
+      - name: Install MAUI workload
+        if: steps.cache-maui-workload.outputs.cache-hit != 'true'
+        run: dotnet workload install maui --ignore-failed-sources
+
+      - name: Restore dependencies
+        run: dotnet restore "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj"
+
+      - name: Publish Android AAB
+        run: dotnet publish "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj" -f net10.0-android -c Release --no-restore /p:AndroidPackageFormat=aab
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: '**/*.aab'
+          retention-days: 14

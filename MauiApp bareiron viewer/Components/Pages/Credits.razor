@@ -1,0 +1,152 @@
+@page "/credits"
+@layout EmptyLayout
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body, .credits-root {
+        background-color: #121212;
+        color: #0f0;
+        font-family: 'Courier New', 'Courier', monospace;
+        font-size: 1.1rem;
+        line-height: 1.5;
+    }
+
+    .credits-root {
+        width: 100vw;
+        min-height: 100vh;
+        padding: 2rem 2.5rem;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: flex-start;
+    }
+
+    .bareiron-logo {
+        display: block;
+        width: 100%;
+        max-width: 700px;
+        height: auto;
+        margin-bottom: 1.5rem;
+    }
+
+    .credits-root p, .credits-root .line {
+        margin: 0.75rem 0;
+        max-width: 900px;
+    }
+
+    .discord-badge {
+        color: #0f0;
+        background: transparent;
+        border: 1px solid #0f0;
+        padding: 0.2rem 1rem;
+        display: inline-block;
+        font-size: 1rem;
+        font-family: 'Courier New', monospace;
+        letter-spacing: 0.5px;
+        margin: 0.5rem 0 1rem 0;
+    }
+
+    .discord-badge i {
+        margin-right: 6px;
+        color: #0f0;
+    }
+
+    .description, .warning {
+        color: #0f0;
+        opacity: 0.95;
+    }
+
+    .warning {
+        color: #ffb86b;
+        opacity: 1;
+        margin-top: 1.5rem;
+    }
+
+    .warning i {
+        margin-right: 8px;
+        color: #ffb86b;
+    }
+
+    .credits-root strong {
+        color: #fff;
+        font-weight: 600;
+    }
+
+    .credits-root a {
+        color: #0f0;
+        text-decoration: none;
+        border-bottom: 1px dotted #0f0;
+    }
+
+    .credits-root a:hover {
+        border-bottom: 1px solid #fff;
+        color: #fff;
+    }
+
+    .back-btn {
+        margin-bottom: 1.5rem;
+        color: #0f0;
+        background: transparent;
+        border: 1px solid #0f0;
+        padding: 0.2rem 1rem;
+        font-family: 'Courier New', monospace;
+        font-size: 0.95rem;
+        cursor: pointer;
+        letter-spacing: 0.5px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .back-btn:hover {
+        background: rgba(0, 255, 0, 0.08);
+        color: #fff;
+        border-color: #fff;
+    }
+</style>
+
+<div class="credits-root">
+
+    <a href="/" class="back-btn"><i class="fa-solid fa-arrow-left"></i> Back</a>
+
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" class="bareiron-logo">
+        <defs>
+            <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#17EAD9" />
+                <stop offset="50%" stop-color="#6078EA" />
+                <stop offset="100%" stop-color="#17EAD9" />
+            </linearGradient>
+            <linearGradient id="line-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#FFA500" />
+                <stop offset="100%" stop-color="#FF0000" />
+            </linearGradient>
+        </defs>
+        <g transform="translate(15, 50.41) scale(0.75)">
+            <path fill="url(#logo-gradient)" d="M 5.4 0 L 13.5 0 C 18.63 0 22.68 -1.51 22.68 -8.64 L 22.68 -12.96 C 22.68 -17.12 21.33 -18.95 19.17 -19.82 C 21.01 -20.79 22.14 -22.68 22.14 -26.46 L 22.14 -29.16 C 22.14 -36.4 18.09 -37.8 12.96 -37.8 L 5.4 -37.8 Z M 9.18 -3.24 L 9.18 -18.36 L 13.5 -18.36 C 16.79 -18.36 18.9 -17.33 18.9 -11.88 L 18.9 -9.18 C 18.9 -4.27 16.79 -3.24 13.5 -3.24 Z M 9.18 -21.06 L 9.18 -34.56 L 12.96 -34.56 C 16.25 -34.56 18.36 -33.53 18.36 -28.62 L 18.36 -27 C 18.36 -22.09 16.25 -21.06 12.96 -21.06 Z M 48.22 0 L 52 0 L 54.16 -10.26 L 63.83 -10.26 L 65.99 0 L 69.77 0 L 61.83 -37.8 L 56.16 -37.8 Z M 54.86 -13.5 L 59.02 -33.32 L 63.18 -13.5 Z M 96.12 0 L 99.9 0 L 99.9 -14.04 L 103.68 -14.04 L 110.43 0 L 114.48 0 L 107.57 -14.47 C 110.75 -15.28 112.86 -17.5 112.86 -22.68 L 112.86 -29.16 C 112.86 -36.4 108.81 -37.8 103.68 -37.8 L 96.12 -37.8 Z M 99.9 -17.28 L 99.9 -34.56 L 103.68 -34.56 C 106.97 -34.56 109.08 -33.53 109.08 -28.62 L 109.08 -23.22 C 109.08 -18.31 106.97 -17.28 103.68 -17.28 Z M 140.83 -37.8 L 140.83 0 L 157.03 0 L 157.03 -3.24 L 144.61 -3.24 L 144.61 -17.28 L 153.79 -17.28 L 153.79 -20.52 L 144.61 -20.52 L 144.61 -34.56 L 156.49 -34.56 L 156.49 -37.8 Z" />
+            <path fill="url(#line-gradient)" d="M 181.25 -85.05 L 186.25 -85.05 L 186.25 28.35 L 181.25 28.35 Z" />
+            <path fill="url(#logo-gradient)" d="M 220.54 -37.8 L 211.9 -37.8 L 211.9 -34.56 L 214.33 -34.56 L 214.33 -3.24 L 211.9 -3.24 L 211.9 0 L 220.54 0 L 220.54 -3.24 L 218.11 -3.24 L 218.11 -34.56 L 220.54 -34.56 Z M 248.51 0 L 252.29 0 L 252.29 -14.04 L 256.07 -14.04 L 262.82 0 L 266.87 0 L 259.96 -14.47 C 263.14 -15.28 265.25 -17.5 265.25 -22.68 L 265.25 -29.16 C 265.25 -36.4 261.2 -37.8 256.07 -37.8 L 248.51 -37.8 Z M 252.29 -17.28 L 252.29 -34.56 L 256.07 -34.56 C 259.36 -34.56 261.47 -33.53 261.47 -28.62 L 261.47 -23.22 C 261.47 -18.31 259.36 -17.28 256.07 -17.28 Z M 292.41 -29.7 L 292.41 -8.1 C 292.41 -0.86 296.51 0.54 301.59 0.54 C 306.72 0.54 310.77 -0.97 310.77 -8.1 L 310.77 -29.7 C 310.77 -36.94 306.72 -38.34 301.59 -38.34 C 296.51 -38.34 292.41 -36.94 292.41 -29.7 Z M 296.19 -9.18 L 296.19 -28.62 C 296.19 -33.53 298.3 -34.56 301.59 -34.56 C 304.88 -34.56 306.99 -33.53 306.99 -28.62 L 306.99 -9.18 C 306.99 -4.27 304.88 -3.24 301.59 -3.24 C 298.3 -3.24 296.19 -4.27 296.19 -9.18 Z M 339.55 -37.8 L 339.55 0 L 343.33 0 L 343.33 -28.62 L 355.1 0 L 358.88 0 L 358.88 -37.8 L 355.1 -37.8 L 355.1 -9.18 L 343.33 -37.8 Z" />
+        </g>
+    </svg>
+
+    <p style="font-size: 1.3rem; margin-bottom: 0.2rem;">Created by <strong style="color:#fff;">Nexora</strong></p>
+    <span class="discord-badge"><i class="fa-brands fa-discord"></i> @@ftw.sadistic</span>
+
+    <p class="description" style="max-width: 800px; margin-top: 1.5rem;">
+        This tool is built using <strong>UnityPy</strong> &amp; <strong>Pyodide</strong> and provides asset viewing capabilities
+        similar to Asset Studio, directly within your browser.
+    </p>
+
+    <p class="warning">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        Asset editing functionality is currently in experimental stages and may not function as intended.
+        Improvements are planned for future updates.
+    </p>
+
+</div>
