@@ -33,7 +33,7 @@ namespace MauiApp_bareiron_viewer
             }
         }
 
-        protected override void OnWindowFocusChanged(bool hasFocus)
+        public override void OnWindowFocusChanged(bool hasFocus)
         {
             base.OnWindowFocusChanged(hasFocus);
             if (!hasFocus) return;

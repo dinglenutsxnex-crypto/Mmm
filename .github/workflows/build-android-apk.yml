@@ -73,4 +73,4 @@ jobs:
         with:
           name: android-apk
           path: 'MauiApp bareiron viewer/bin/Release/net10.0-android/publish/*.apk'
-          retention-days: 14
+          retention-days: 1
