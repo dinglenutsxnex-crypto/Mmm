@@ -5,6 +5,7 @@
 @using MauiApp_bareiron_viewer.Services
 @using System.IO
 @using System.IO.Compression
+@using System.Linq
 @using System.Text.Json
 @inject IJSRuntime JS
 @implements IDisposable
@@ -1212,14 +1213,22 @@
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
+            const int BatchSize = 100;
             await Task.Run(async () =>
             {
-                foreach (var (displayName, documentUri) in safFiles)
+                for (int b = 0; b < safFiles.Count; b += BatchSize)
                 {
-                    _registry.ScanFile(displayName, displayName, safUri: documentUri);
-                    _loadDone++;
-                    if (_loadDone % 5 == 0)
-                        await InvokeAsync(StateHasChanged);
+                    foreach (var (displayName, documentUri) in safFiles.Skip(b).Take(BatchSize))
+                    {
+                        _registry.ScanFile(displayName, displayName, safUri: documentUri);
+                        _loadDone++;
+                        if (_loadDone % 5 == 0)
+                            await InvokeAsync(StateHasChanged);
+                    }
+                    // Flush AssetsTools internal type caches that accumulate across ScanFile calls
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
                 }
             });
 #else
@@ -1245,12 +1254,18 @@
 
             await Task.Run(async () =>
             {
-                foreach (var filePath in files)
+                for (int b = 0; b < files.Length; b += BatchSize)
                 {
-                    _registry.ScanFile(filePath, Path.GetFileName(filePath));
-                    _loadDone++;
-                    if (_loadDone % 5 == 0)
-                        await InvokeAsync(StateHasChanged);
+                    foreach (var filePath in files.Skip(b).Take(BatchSize))
+                    {
+                        _registry.ScanFile(filePath, Path.GetFileName(filePath));
+                        _loadDone++;
+                        if (_loadDone % 5 == 0)
+                            await InvokeAsync(StateHasChanged);
+                    }
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
                 }
             });
 #endif
