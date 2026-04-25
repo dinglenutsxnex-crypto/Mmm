@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AssetsTools.NET;
@@ -164,7 +165,7 @@ public sealed class BundleRegistry : IDisposable
                             {
                                 var af = mgr.LoadAssetsFileFromBundle(bundle, i);
                                 if (af?.file?.AssetInfos == null) continue;
-                                ScanSubFile(af, mgr, slotIndex, i);
+                                ScanSubFile(af, slotIndex, i);
                                 any = true;
                             }
                             catch { }
@@ -183,7 +184,7 @@ public sealed class BundleRegistry : IDisposable
                         {
                             var af = mgr.LoadAssetsFileFromBundle(bundle, i);
                             if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, mgr, slotIndex, i);
+                            ScanSubFile(af, slotIndex, i);
                             any = true;
                         }
                         catch { }
@@ -197,7 +198,7 @@ public sealed class BundleRegistry : IDisposable
                     var af = mgr.LoadAssetsFile(filePath);
                     if (af?.file?.AssetInfos != null)
                     {
-                        ScanSubFile(af, mgr, slotIndex, 0);
+                        ScanSubFile(af, slotIndex, 0);
                         any = true;
                     }
                 }
@@ -241,53 +242,74 @@ public sealed class BundleRegistry : IDisposable
     /// For each asset, only call GetBaseField again if that type has m_Name.
     /// GC.Collect(0) every 2000 named assets frees field trees mid-loop.
     /// </summary>
-    private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile)
+    private void ScanSubFile(AssetsFileInstance af, int slotIndex, int subFile)
     {
         var infos = af.file.AssetInfos;
-
-        // Lazily-populated cache: TypeId -> (typeName, hasName)
-        // First asset of each TypeId pays one GetBaseField; all others are free.
-        var typeCache = new Dictionary<int, (string TypeName, bool HasName)>();
-
         EnsureCapacity(_count + infos.Count);
 
-        int gcCounter = 0;
+        var typeTree = af.file.Metadata?.TypeTreeTypes;
+
+        var typeNameCache = new Dictionary<int, string>();
+        var nameFieldOffsetCache = new Dictionary<int, int>();
+
         foreach (var info in infos)
         {
-            string type    = "Unknown";
-            string name    = "";
-            bool   hasName = false;
+            string typeName = "Unknown";
+            string name     = "";
 
-            if (!typeCache.TryGetValue(info.TypeId, out var tc))
+            if (!typeNameCache.TryGetValue(info.TypeId, out var tn))
             {
-                try
-                {
-                    var probe = mgr.GetBaseField(af, info);
-                    tc = (probe.TypeName ?? "Unknown", probe["m_Name"] is { IsDummy: false });
-                }
-                catch { tc = ("Unknown", false); }
-                typeCache[info.TypeId] = tc;
+                tn = "Unknown";
+                var tt = typeTree?.Find(t => t.TypeId == info.TypeId);
+                if (tt != null)
+                    tn = tt.Nodes?.Count > 0 ? (tt.Nodes[0].GetTypeString(tt.StringBuffer) ?? "Unknown") : "Unknown";
+                typeNameCache[info.TypeId] = tn;
             }
-            type    = tc.TypeName;
-            hasName = tc.HasName;
+            typeName = tn;
 
-            if (hasName)
+            if (!nameFieldOffsetCache.TryGetValue(info.TypeId, out int nameOffset))
+            {
+                nameOffset = -1;
+                var tt = typeTree?.Find(t => t.TypeId == info.TypeId);
+                if (tt?.Nodes != null)
+                {
+                    int byteOff = 0;
+                    for (int ni = 1; ni < tt.Nodes.Count; ni++)
+                    {
+                        var node = tt.Nodes[ni];
+                        string nname = node.GetNameString(tt.StringBuffer) ?? "";
+                        string ntype = node.GetTypeString(tt.StringBuffer) ?? "";
+                        if (nname == "m_Name" && ntype == "string")
+                        {
+                            nameOffset = byteOff;
+                            break;
+                        }
+                        if (node.Level == 1)
+                        {
+                            int sz = node.ByteSize;
+                            if (sz > 0) byteOff += sz;
+                            else { byteOff = -1; break; }
+                        }
+                    }
+                }
+                nameFieldOffsetCache[info.TypeId] = nameOffset;
+            }
+
+            if (nameOffset >= 0)
             {
                 try
                 {
-                    var bf        = mgr.GetBaseField(af, info);
-                    var nameField = bf["m_Name"];
-                    name = nameField.IsDummy ? "" : (nameField.AsString ?? "");
-                    bf   = null!; // drop ref so GC can collect
+                    var reader = af.file.Reader;
+                    reader.Position = info.AbsoluteByteStart + nameOffset;
+                    int strLen = reader.ReadInt32();
+                    if (strLen > 0 && strLen < 512)
+                        name = new string(reader.ReadChars(strLen));
                 }
                 catch { }
-
-                if (++gcCounter % 2000 == 0)
-                    GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
 
             _descriptors[_count++] = new AssetDescriptor(
-                info.PathId, slotIndex, subFile, info.ByteSize, type, name);
+                info.PathId, slotIndex, subFile, info.ByteSize, typeName, name);
         }
     }
 
