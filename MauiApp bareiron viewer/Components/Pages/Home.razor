@@ -1213,7 +1213,7 @@
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
-            const int BatchSize = 100;
+            const int BatchSize = 50;
             await Task.Run(async () =>
             {
                 for (int b = 0; b < safFiles.Count; b += BatchSize)
