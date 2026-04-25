@@ -1060,9 +1060,8 @@
     bool meshLoading;
 
     // Available types for filter dropdown (rebuilt when registry changes)
-    // FIX: Cache AvailableTypes so it is not rebuilt on every render cycle.
-    // The old version called .ToArray() on the full descriptor span each time,
-    // creating a large heap allocation every frame the filter dropdown was open.
+    // Cache AvailableTypes — the old version called .ToArray() on the full span
+    // every render frame, creating a large heap copy each time.
     List<string> _availableTypesCache = new();
     bool _availableTypesDirty = true;
 
@@ -1217,11 +1216,6 @@
             {
                 foreach (var (displayName, documentUri) in safFiles)
                 {
-                    // FIX: Yield to memory guard before each bundle scan.
-                    // This lets the GC run and pauses the loop if RAM is tight,
-                    // preventing OOM crashes on large folders.
-                    await MemoryGuard.ThrottleIfNeededAsync();
-
                     _registry.ScanFile(displayName, displayName, safUri: documentUri);
                     _loadDone++;
                     if (_loadDone % 5 == 0)
@@ -1253,9 +1247,6 @@
             {
                 foreach (var filePath in files)
                 {
-                    // FIX: Yield to memory guard before each bundle scan.
-                    await MemoryGuard.ThrottleIfNeededAsync();
-
                     _registry.ScanFile(filePath, Path.GetFileName(filePath));
                     _loadDone++;
                     if (_loadDone % 5 == 0)

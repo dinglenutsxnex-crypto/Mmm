@@ -34,12 +34,8 @@ public readonly struct AssetDescriptor
 }
 
 /// <summary>
-/// Per-bundle state.  Before first click: stores file path only.
+/// Per-bundle state. Before first click: stores file path only.
 /// After first click: holds the open AssetsManager + sub-files.
-///
-/// FIX: Added LRU-style slot eviction so that only one bundle is kept open at
-/// a time during normal inspection use.  Large bundles are released as soon as
-/// the user moves to a different bundle, preventing unbounded RAM growth.
 /// </summary>
 internal sealed class BundleSlot
 {
@@ -69,10 +65,8 @@ internal sealed class BundleSlot
                 if (SafUri != null)
                 {
                     OpenManager = new AssetsManager();
-                    // FIX: Dispose the MemoryStream immediately after LoadBundleFile
-                    // so the raw bundle bytes are freed — only the parsed structures stay.
                     using var stream = AndroidDownloadService.OpenSafStream(SafUri);
-                    using var ms = new MemoryStream();
+                    var ms = new MemoryStream();
                     stream.CopyTo(ms);
                     ms.Position = 0;
                     var bundle = OpenManager.LoadBundleFile(ms, FilePath, unpackIfPacked: true);
@@ -106,24 +100,14 @@ internal sealed class BundleSlot
     public void Release()
     {
         _lock.Wait();
-        try
-        {
-            OpenFiles   = Array.Empty<AssetsFileInstance?>();
-            OpenManager = null;
-        }
+        try { OpenFiles = Array.Empty<AssetsFileInstance?>(); OpenManager = null; }
         finally { _lock.Release(); }
     }
 }
 
 /// <summary>
-/// Central registry.  Holds only compact AssetDescriptor[] at rest.
+/// Central registry. Holds only compact AssetDescriptor[] at rest.
 /// Full bundle files are opened on demand when an asset is clicked.
-///
-/// FIX: ScanFile now calls MemoryGuard.ThrottleIfNeededAsync (via the
-/// synchronous wrapper ThrottleSync) before each scan so that when free RAM
-/// drops below ~350 MB the scan loop pauses and forces a full GC rather than
-/// crashing.  GC.Collect frequency inside ScanSubFile is also tuned to be
-/// more aggressive for large bundles (many assets).
 /// </summary>
 public sealed class BundleRegistry : IDisposable
 {
@@ -144,33 +128,15 @@ public sealed class BundleRegistry : IDisposable
         _count = 0;
         _scansSinceLastGc = 0;
         ScanErrors.Clear();
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-    }
-
-    /// <summary>
-    /// Synchronous throttle wrapper — safe to call from non-async ScanFile.
-    /// Blocks the calling thread for up to ~400 ms when RAM is tight.
-    /// </summary>
-    private static void ThrottleSync()
-    {
-        if (!MemoryGuard.IsUnderPressure()) return;
-        // Run the async throttle on a threadpool thread and wait for it.
-        MemoryGuard.ThrottleIfNeededAsync().GetAwaiter().GetResult();
     }
 
     /// <summary>
     /// Scans a file: extracts type name + asset name without full GetBaseField deserialization
-    /// for unnamed asset types.
-    ///
-    /// FIX: Added memory pressure check before each scan.  The scan-time
-    /// AssetsManager and MemoryStream are explicitly set to null before the
-    /// post-scan GC hint so the GC can actually collect them.
+    /// for unnamed asset types. Writes descriptors directly into _descriptors[] — no
+    /// intermediate list. Hints GC between files so dead scan managers are collected promptly.
     /// </summary>
     public void ScanFile(string filePath, string displayName, string? safUri = null)
     {
-        // --- RAM guard: pause here if device is low on memory ---
-        ThrottleSync();
-
         int slotIndex   = _slots.Count;
         int countBefore = _count;
 
@@ -204,13 +170,7 @@ public sealed class BundleRegistry : IDisposable
                             catch { }
                         }
                     }
-                    finally
-                    {
-                        // FIX: explicitly dispose + null the MemoryStream here so the
-                        // raw bundle bytes are freed before the post-scan GC hint.
-                        ms?.Dispose();
-                        ms = null;
-                    }
+                    finally { ms?.Dispose(); }
                 }
                 else
 #endif
@@ -248,25 +208,14 @@ public sealed class BundleRegistry : IDisposable
                     return;
                 }
             }
-            finally
-            {
-                // FIX: null the manager so the GC hint below can actually
-                // collect the scan-time AssetsManager and all its buffers.
-                mgr = null!;
-            }
+
+            // Null the manager so the GC hint below can collect it and its buffers.
+            mgr = null!;
 
             _scansSinceLastGc++;
-
-            // FIX: Adaptive GC frequency — every 20 files normally,
-            // but every 5 files when memory is tight.
-            bool pressured = MemoryGuard.IsUnderPressure();
-            int gcInterval = pressured ? 5 : 20;
-
-            if (_scansSinceLastGc >= gcInterval)
+            if (_scansSinceLastGc >= 50)
             {
                 _scansSinceLastGc = 0;
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-                GC.WaitForPendingFinalizers();
                 GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
             }
             else
@@ -289,15 +238,18 @@ public sealed class BundleRegistry : IDisposable
     /// <summary>
     /// Writes descriptors for one sub-file into _descriptors[].
     ///
-    /// FIX: GC interval is now adaptive — every 500 named assets normally,
-    /// every 100 when memory is tight — so big bundles don't spike as high.
-    /// The type-cache dictionary is explicitly cleared after the loop to drop
-    /// any retained field trees promptly.
+    /// RAM optimization: call GetBaseField ONCE per unique TypeId (not per asset) to learn
+    /// the type name and whether it has m_Name. A bundle has ~20-50 unique types but
+    /// potentially 500k assets — so this cuts GetBaseField calls from 500k down to ~50.
+    /// For each asset, only call GetBaseField again if that type has m_Name.
+    /// GC.Collect(0) every 2000 named assets frees field trees mid-loop.
     /// </summary>
     private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile)
     {
         var infos = af.file.AssetInfos;
 
+        // Lazily-populated cache: TypeId -> (typeName, hasName)
+        // First asset of each TypeId pays one GetBaseField; all others are free.
         var typeCache = new Dictionary<int, (string TypeName, bool HasName)>();
 
         EnsureCapacity(_count + infos.Count);
@@ -329,33 +281,18 @@ public sealed class BundleRegistry : IDisposable
                     var bf        = mgr.GetBaseField(af, info);
                     var nameField = bf["m_Name"];
                     name = nameField.IsDummy ? "" : (nameField.AsString ?? "");
-                    bf   = null!;
+                    bf   = null!; // drop ref so GC can collect
                 }
                 catch { }
 
-                gcCounter++;
-
-                // FIX: Adaptive GC cadence inside the hot loop.
-                // Tight memory → collect every 100 named assets.
-                // Normal      → collect every 500 named assets.
-                bool memTight = MemoryGuard.IsUnderPressure();
-                int  interval = memTight ? 100 : 500;
-
-                if (gcCounter % interval == 0)
-                {
-                    if (memTight)
-                        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-                    else
-                        GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
-                }
+                if (++gcCounter % 2000 == 0)
+                    GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
 
             _descriptors[_count++] = new AssetDescriptor(
                 info.PathId, slotIndex, subFile, info.ByteSize, type, name);
         }
-
-        // FIX: Clear the type-cache dictionary so any retained AssetTypeValueField
-        // objects (from the probe) can be collected promptly.
+        // Drop cached field probes so the GC can collect them after this sub-file is done.
         typeCache.Clear();
     }
 
