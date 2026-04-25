@@ -583,6 +583,29 @@
         font-family: 'Consolas',monospace;
     }
 
+    .bi-toast {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #3a2a1a;
+        border: 1px solid #7a5a2a;
+        color: #f0c070;
+        padding: 10px 18px;
+        border-radius: 5px;
+        font-size: 12px;
+        font-family: 'Consolas',monospace;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+        z-index: 9999;
+        white-space: nowrap;
+        animation: toast-in 0.2s ease;
+    }
+
+    @@keyframes toast-in {
+        from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+        to   { opacity: 1; transform: translateX(-50%) translateY(0);   }
+    }
+
     /* ── About modal ── */
     .modal-overlay {
         position: fixed;
@@ -753,6 +776,11 @@
 </style>
 
 <div class="bi-root" @onclick="CloseAllDropdowns">
+
+    @if (_toastMessage != null)
+    {
+        <div class="bi-toast" @onclick="@(() => _toastMessage = null)">⚠ @_toastMessage</div>
+    }
 
     <!-- ═══════════ NAV BAR ═══════════ -->
     <div class="bi-nav">
@@ -1033,6 +1061,7 @@
     // ── UI state ──────────────────────────────────────────────────────────────
     string searchQuery = "";
     string error = "";
+    string _toastMessage = null!;
     string bundleFileName = "";
     bool loading = false;
     bool inspectorLoading = false;
@@ -1137,11 +1166,18 @@
     }
 
     // ── File picker ──────────────────────────────────────────────────────────
+    async Task DismissToastAfterDelayAsync()
+    {
+        await Task.Delay(5000);
+        _toastMessage = null!;
+        await InvokeAsync(StateHasChanged);
+    }
+
     void ResetState()
     {
         _registry.Clear();
         selectedDesc = null; inspectorFields = null; textureResult = null; meshResult = null;
-        hiddenTypes.Clear(); _filterDirty = true; error = "";
+        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null!;
         _loadDone = 0; _loadTotal = 0;
     }
 
@@ -1164,6 +1200,12 @@
             bundleFileName = $"{_registry.Count} assets";
             if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
                 error = $"0 assets loaded. Error: {_registry.ScanErrors[0]}";
+            if (_registry.SkippedFontBundles.Count > 0)
+            {
+                var n = _registry.SkippedFontBundles.Count;
+                _toastMessage = $"{n} font bundle{(n == 1 ? "" : "s")} skipped — crash prevention.";
+                _ = DismissToastAfterDelayAsync();
+            }
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }
@@ -1240,6 +1282,12 @@
                 error = $"0 assets loaded. First error: {_registry.ScanErrors[0]}";
             else if (_registry.ScanErrors.Count > 0)
                 error = $"{_registry.ScanErrors.Count} file(s) skipped. First: {_registry.ScanErrors[0]}";
+            if (_registry.SkippedFontBundles.Count > 0)
+            {
+                var n = _registry.SkippedFontBundles.Count;
+                _toastMessage = $"{n} font bundle{(n == 1 ? "" : "s")} skipped — crash prevention.";
+                _ = DismissToastAfterDelayAsync();
+            }
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }
