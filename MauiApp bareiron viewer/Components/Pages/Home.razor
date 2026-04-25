@@ -1284,8 +1284,8 @@
                 error = $"{_registry.ScanErrors.Count} file(s) skipped. First: {_registry.ScanErrors[0]}";
             if (_registry.SkippedFontBundles.Count > 0)
             {
-                var n = _registry.SkippedFontBundles.Count;
-                _toastMessage = $"{n} font bundle{(n == 1 ? "" : "s")} skipped — crash prevention.";
+                var nf = _registry.SkippedFontBundles.Count;
+                _toastMessage = $"{nf} font bundle{(nf == 1 ? "" : "s")} skipped — crash prevention.";
                 _ = DismissToastAfterDelayAsync();
             }
         }
