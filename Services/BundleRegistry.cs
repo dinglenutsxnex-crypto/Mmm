@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AssetsTools.NET;
@@ -68,7 +67,7 @@ internal sealed class BundleSlot
                 {
                     OpenManager = new AssetsManager();
                     using var stream = AndroidDownloadService.OpenSafStream(SafUri);
-                    using var ms = new MemoryStream();
+                    var ms = new MemoryStream();
                     stream.CopyTo(ms);
                     ms.Position = 0;
                     var bundle = OpenManager.LoadBundleFile(ms, FilePath, unpackIfPacked: true);
@@ -144,16 +143,6 @@ public sealed class BundleRegistry : IDisposable
 
         try
         {
-            // Throttle memory usage before loading this bundle
-#if ANDROID
-            try { MemoryMonitor.Instance.ThrottleIfNeededAsync().GetAwaiter().GetResult(); }
-            catch (OutOfMemoryException)
-            {
-                ScanErrors.Add($"{displayName}: Insufficient memory to load bundle");
-                return;
-            }
-#endif
-
             var mgr = new AssetsManager();
             bool any = false;
             try
@@ -161,11 +150,33 @@ public sealed class BundleRegistry : IDisposable
 #if ANDROID
                 if (safUri != null)
                 {
-                    using var stream = AndroidDownloadService.OpenSafStream(safUri);
-                    using var ms = new MemoryStream();
-                    stream.CopyTo(ms);
-                    ms.Position = 0;
-                    var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
+                    MemoryStream? ms = null;
+                    try
+                    {
+                        using var stream = AndroidDownloadService.OpenSafStream(safUri);
+                        ms = new MemoryStream();
+                        stream.CopyTo(ms);
+                        ms.Position = 0;
+                        var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
+                        var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                        for (int i = 0; i < dirs.Count; i++)
+                        {
+                            try
+                            {
+                                var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                                if (af?.file?.AssetInfos == null) continue;
+                                ScanSubFile(af, slotIndex, i);
+                                any = true;
+                            }
+                            catch { }
+                        }
+                    }
+                    finally { ms?.Dispose(); }
+                }
+                else
+#endif
+                {
+                    var bundle = mgr.LoadBundleFile(filePath);
                     var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
                     for (int i = 0; i < dirs.Count; i++)
                     {
@@ -179,23 +190,6 @@ public sealed class BundleRegistry : IDisposable
                         catch { }
                     }
                 }
-                else
-#endif
-                {
-                    var bundle = mgr.LoadBundleFile(filePath);
-                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                    for (int i = 0; i < dirs.Count; i++)
-                    {
-                        try
-                        {
-                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                            if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, mgr, slotIndex, i);
-                            any = true;
-                        }
-                        catch { }
-                    }
-                }
             }
             catch (Exception bundleEx)
             {
@@ -204,7 +198,7 @@ public sealed class BundleRegistry : IDisposable
                     var af = mgr.LoadAssetsFile(filePath);
                     if (af?.file?.AssetInfos != null)
                     {
-                        ScanSubFile(af, mgr, slotIndex, 0);
+                        ScanSubFile(af, slotIndex, 0);
                         any = true;
                     }
                 }
@@ -248,57 +242,74 @@ public sealed class BundleRegistry : IDisposable
     /// For each asset, only call GetBaseField again if that type has m_Name.
     /// GC.Collect(0) every 2000 named assets frees field trees mid-loop.
     /// </summary>
-    private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile)
+    private void ScanSubFile(AssetsFileInstance af, int slotIndex, int subFile)
     {
         var infos = af.file.AssetInfos;
-
-        // Lazily-populated cache: TypeId -> (typeName, hasName)
-        // First asset of each TypeId pays one GetBaseField; all others are free.
-        var typeCache = new Dictionary<int, (string TypeName, bool HasName)>();
-
         EnsureCapacity(_count + infos.Count);
 
-        int gcCounter = 0;
+        var typeTree = af.file.Metadata?.TypeTreeTypes;
+
+        var typeNameCache = new Dictionary<int, string>();
+        var nameFieldOffsetCache = new Dictionary<int, int>();
+
         foreach (var info in infos)
         {
-            string type    = "Unknown";
-            string name    = "";
-            bool   hasName = false;
+            string typeName = "Unknown";
+            string name     = "";
 
-            if (!typeCache.TryGetValue(info.TypeId, out var tc))
+            if (!typeNameCache.TryGetValue(info.TypeId, out var tn))
             {
-                try
-                {
-                    var probe = mgr.GetBaseField(af, info);
-                    tc = (probe.TypeName ?? "Unknown", probe["m_Name"] is { IsDummy: false });
-                }
-                catch { tc = ("Unknown", false); }
-                typeCache[info.TypeId] = tc;
+                tn = "Unknown";
+                var tt = typeTree?.Find(t => t.TypeId == info.TypeId);
+                if (tt != null)
+                    tn = tt.Nodes?.Count > 0 ? (tt.Nodes[0].GetTypeString(tt.StringBuffer) ?? "Unknown") : "Unknown";
+                typeNameCache[info.TypeId] = tn;
             }
-            type    = tc.TypeName;
-            hasName = tc.HasName;
+            typeName = tn;
 
-            if (hasName)
+            if (!nameFieldOffsetCache.TryGetValue(info.TypeId, out int nameOffset))
+            {
+                nameOffset = -1;
+                var tt = typeTree?.Find(t => t.TypeId == info.TypeId);
+                if (tt?.Nodes != null)
+                {
+                    int byteOff = 0;
+                    for (int ni = 1; ni < tt.Nodes.Count; ni++)
+                    {
+                        var node = tt.Nodes[ni];
+                        string nname = node.GetNameString(tt.StringBuffer) ?? "";
+                        string ntype = node.GetTypeString(tt.StringBuffer) ?? "";
+                        if (nname == "m_Name" && ntype == "string")
+                        {
+                            nameOffset = byteOff;
+                            break;
+                        }
+                        if (node.Level == 1)
+                        {
+                            int sz = node.ByteSize;
+                            if (sz > 0) byteOff += sz;
+                            else { byteOff = -1; break; }
+                        }
+                    }
+                }
+                nameFieldOffsetCache[info.TypeId] = nameOffset;
+            }
+
+            if (nameOffset >= 0)
             {
                 try
                 {
                     var reader = af.file.Reader;
-                    reader.Position = info.absoluteFilePos + nameOffset;
+                    reader.Position = info.AbsoluteByteStart + nameOffset;
                     int strLen = reader.ReadInt32();
                     if (strLen > 0 && strLen < 512)
-                    {
-                        byte[] strBytes = reader.ReadBytes(strLen);
-                        name = Encoding.UTF8.GetString(strBytes);
-                    }
+                        name = new string(reader.ReadChars(strLen));
                 }
                 catch { }
-
-                if (++gcCounter % 2000 == 0)
-                    GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
 
             _descriptors[_count++] = new AssetDescriptor(
-                info.PathId, slotIndex, subFile, info.ByteSize, type, name);
+                info.PathId, slotIndex, subFile, info.ByteSize, typeName, name);
         }
     }
 
@@ -321,25 +332,10 @@ public sealed class BundleRegistry : IDisposable
             _slots[slot].Release();
     }
 
-    private const int MaxDescriptorCapacity = 1_000_000; // 1M descriptors max
-
     private void EnsureCapacity(int needed)
     {
         if (needed <= _descriptors.Length) return;
-        
-        int currentSize = _descriptors.Length;
-        if (currentSize == 0) currentSize = 256;
-        
-        // Double the size, but cap at MaxDescriptorCapacity to prevent unbounded growth
-        long newSizeLong = currentSize * 2L;
-        if (newSizeLong > MaxDescriptorCapacity) newSizeLong = MaxDescriptorCapacity;
-        
-        // Always ensure we have at least what we need
-        if (newSizeLong < needed) newSizeLong = needed;
-        
-        // Final safety cap
-        int newSize = (int)Math.Min(newSizeLong, MaxDescriptorCapacity);
-        
+        int newSize = Math.Max(needed, Math.Max(1024, _descriptors.Length * 2));
         Array.Resize(ref _descriptors, newSize);
     }
 
