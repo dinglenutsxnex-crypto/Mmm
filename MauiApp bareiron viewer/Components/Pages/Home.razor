@@ -1502,16 +1502,16 @@
 
             int af  = format;
             int expectedRgba8 = ((width + 3) / 4) * ((height + 3) / 4) * 16;
-            if (format == 47 && imageData.Length >= expectedRgba8) { af = 49; }
+            if (format == 47 && imageData.Length >= expectedRgba8) { af = 48; }
 
             try
             {
                 var decoded = BareIronTextureDecoder.Decode(imageData, width, height, af);
-                return new TextureDecodeResult { RgbaData = decoded, Width = width, Height = height, FormatId = af, FormatName = GetFormatName(format), SwapRB = false };
+                return new TextureDecodeResult { RgbaData = decoded, Width = width, Height = height, FormatId = af, FormatName = BareIronTextureDecoder.GetFormatName(format), SwapRB = false };
             }
             catch (Exception decEx)
             {
-                return new TextureDecodeResult { RgbaData = imageData, Width = width, Height = height, FormatId = format, FormatName = GetFormatName(format), SwapRB = false, Error = $"Decode failed: {decEx.Message}" };
+                return new TextureDecodeResult { RgbaData = imageData, Width = width, Height = height, FormatId = format, FormatName = BareIronTextureDecoder.GetFormatName(format), SwapRB = false, Error = $"Decode failed: {decEx.Message}" };
             }
         }
         catch (Exception ex) { return new TextureDecodeResult { Error = $"Error: {ex.Message}" }; }
