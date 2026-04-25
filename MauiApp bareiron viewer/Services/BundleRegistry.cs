@@ -66,7 +66,10 @@ internal sealed class BundleSlot
                 {
                     OpenManager = new AssetsManager();
                     using var stream = AndroidDownloadService.OpenSafStream(SafUri);
-                    var bundle = OpenManager.LoadBundleFile(stream, FilePath);
+                    var ms = new MemoryStream();
+                    stream.CopyTo(ms);
+                    ms.Position = 0;
+                    var bundle = OpenManager.LoadBundleFile(ms, FilePath, unpackIfPacked: true);
                     int count  = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
                     OpenFiles  = new AssetsFileInstance?[count];
                     for (int i = 0; i < count; i++)
@@ -145,7 +148,10 @@ public sealed class BundleRegistry : IDisposable
                 if (safUri != null)
                 {
                     using var stream = AndroidDownloadService.OpenSafStream(safUri);
-                    var bundle = mgr.LoadBundleFile(stream, filePath);
+                    var ms = new MemoryStream();
+                    stream.CopyTo(ms);
+                    ms.Position = 0;
+                    var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
                     var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
                     for (int i = 0; i < dirs.Count; i++)
                     {
@@ -283,10 +289,6 @@ public sealed class BundleRegistry : IDisposable
 
     public string GetBundleName(int slot)
         => slot >= 0 && slot < _slots.Count ? _slots[slot].DisplayName : "";
-
-    public string? FindSafUriForBundle(BundleFileInstance bi)
-        => _slots.FirstOrDefault(s => s.OpenManager != null &&
-               s.OpenManager.Files.Any(f => f.parentBundle == bi))?.SafUri;
 
     private void EnsureCapacity(int needed)
     {

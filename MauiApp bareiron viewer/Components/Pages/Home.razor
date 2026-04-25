@@ -1489,29 +1489,8 @@
                             var di = BundleHelper.GetDirInfo(bi.file, sp);
                             if (di != null)
                             {
-                                long absOffset = di.Offset + (long)so;
-                                var slot = _registry.FindSafUriForBundle(bi);
-#if ANDROID
-                                if (slot != null)
-                                {
-                                    using var safStream = AndroidDownloadService.OpenSafStream(slot);
-                                    safStream.Seek(absOffset, SeekOrigin.Begin);
-                                    var buf = new byte[ss];
-                                    int read = 0;
-                                    while (read < (int)ss)
-                                    {
-                                        int n = safStream.Read(buf, read, (int)ss - read);
-                                        if (n <= 0) break;
-                                        read += n;
-                                    }
-                                    imageData = buf;
-                                }
-                                else
-#endif
-                                {
-                                    bi.file.DataReader.Position = absOffset;
-                                    imageData = bi.file.DataReader.ReadBytes((int)ss);
-                                }
+                                bi.file.DataReader.Position = di.Offset + (long)so;
+                                imageData = bi.file.DataReader.ReadBytes((int)ss);
                             }
                         }
                     }
