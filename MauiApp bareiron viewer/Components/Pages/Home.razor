@@ -1490,11 +1490,11 @@
                             if (di != null)
                             {
                                 long absOffset = di.Offset + (long)so;
-                                var slot = _registry.FindSlotForBundle(bi);
+                                var slot = _registry.FindSafUriForBundle(bi);
 #if ANDROID
-                                if (slot?.SafUri != null)
+                                if (slot != null)
                                 {
-                                    using var safStream = AndroidDownloadService.OpenSafStream(slot.SafUri);
+                                    using var safStream = AndroidDownloadService.OpenSafStream(slot);
                                     safStream.Seek(absOffset, SeekOrigin.Begin);
                                     var buf = new byte[ss];
                                     int read = 0;
