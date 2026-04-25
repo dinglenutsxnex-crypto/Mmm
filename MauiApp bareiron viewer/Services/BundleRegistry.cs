@@ -140,6 +140,10 @@ public sealed class BundleRegistry : IDisposable
         int slotIndex   = _slots.Count;
         int countBefore = _count;
 
+        const long BigBundleThreshold = 30L * 1024 * 1024;
+        bool isBigBundle = false;
+        try { isBigBundle = new FileInfo(filePath).Length > BigBundleThreshold; } catch { }
+
         try
         {
             var mgr = new AssetsManager();
@@ -164,7 +168,7 @@ public sealed class BundleRegistry : IDisposable
                             {
                                 var af = mgr.LoadAssetsFileFromBundle(bundle, i);
                                 if (af?.file?.AssetInfos == null) continue;
-                                ScanSubFile(af, mgr, slotIndex, i);
+                                ScanSubFile(af, mgr, slotIndex, i, isBigBundle);
                                 any = true;
                             }
                             catch { }
@@ -183,7 +187,7 @@ public sealed class BundleRegistry : IDisposable
                         {
                             var af = mgr.LoadAssetsFileFromBundle(bundle, i);
                             if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, mgr, slotIndex, i);
+                            ScanSubFile(af, mgr, slotIndex, i, isBigBundle);
                             any = true;
                         }
                         catch { }
@@ -197,7 +201,7 @@ public sealed class BundleRegistry : IDisposable
                     var af = mgr.LoadAssetsFile(filePath);
                     if (af?.file?.AssetInfos != null)
                     {
-                        ScanSubFile(af, mgr, slotIndex, 0);
+                        ScanSubFile(af, mgr, slotIndex, 0, isBigBundle);
                         any = true;
                     }
                 }
@@ -209,8 +213,10 @@ public sealed class BundleRegistry : IDisposable
                 }
             }
 
-            // Null the manager so the GC hint below can collect it and its buffers.
-            mgr = null!;
+            // For bundles larger than 30 MB, null the manager before the GC hint
+            // so its buffers are actually reclaimable. Small bundles skip this.
+            if (isBigBundle)
+                mgr = null!;
 
             _scansSinceLastGc++;
             if (_scansSinceLastGc >= 50)
@@ -244,7 +250,7 @@ public sealed class BundleRegistry : IDisposable
     /// For each asset, only call GetBaseField again if that type has m_Name.
     /// GC.Collect(0) every 2000 named assets frees field trees mid-loop.
     /// </summary>
-    private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile)
+    private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile, bool bigBundle = false)
     {
         var infos = af.file.AssetInfos;
 
@@ -285,7 +291,7 @@ public sealed class BundleRegistry : IDisposable
                 }
                 catch { }
 
-                if (++gcCounter % 2000 == 0)
+                if (bigBundle && ++gcCounter % 2000 == 0)
                     GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
 
