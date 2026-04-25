@@ -1060,9 +1060,28 @@
     bool meshLoading;
 
     // Available types for filter dropdown (rebuilt when registry changes)
-    IReadOnlyList<string> AvailableTypes =>
-        _registry.All.ToArray()
-            .Select(a => a.Type).Distinct().OrderBy(t => t).ToList();
+    // FIX: Cache AvailableTypes so it is not rebuilt on every render cycle.
+    // The old version called .ToArray() on the full descriptor span each time,
+    // creating a large heap allocation every frame the filter dropdown was open.
+    List<string> _availableTypesCache = new();
+    bool _availableTypesDirty = true;
+
+    IReadOnlyList<string> AvailableTypes
+    {
+        get
+        {
+            if (!_availableTypesDirty) return _availableTypesCache;
+            _availableTypesDirty = false;
+            var all = _registry.All;
+            var seen = new HashSet<string>();
+            _availableTypesCache.Clear();
+            for (int i = 0; i < all.Length; i++)
+                if (seen.Add(all[i].Type))
+                    _availableTypesCache.Add(all[i].Type);
+            _availableTypesCache.Sort(StringComparer.Ordinal);
+            return _availableTypesCache;
+        }
+    }
 
     // ── Download helpers ─────────────────────────────────────────────────────
     async Task TriggerDownload(string filename, byte[] bytes, string mimeType)
@@ -1162,6 +1181,7 @@
             await Task.Run(() => _registry.ScanFile(result.FullPath, result.FileName));
 
             _filterDirty = true;
+            _availableTypesDirty = true;
             bundleFileName = $"{_registry.Count} assets";
             if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
                 error = $"0 assets loaded. Error: {_registry.ScanErrors[0]}";
@@ -1193,28 +1213,21 @@
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
-            bool _memLimitAndroid = false;
             await Task.Run(async () =>
             {
                 foreach (var (displayName, documentUri) in safFiles)
                 {
-                    // FIX: check available RAM before each bundle.
-                    // If RAM is critically low, try to recover via GC first.
-                    // If memory is still too low after recovery, stop loading
-                    // rather than crash the app.
-                    if (MemoryGuard.IsMemoryLow())
-                    {
-                        bool recovered = await MemoryGuard.TryRecoverAsync();
-                        if (!recovered) { _memLimitAndroid = true; break; }
-                    }
+                    // FIX: Yield to memory guard before each bundle scan.
+                    // This lets the GC run and pauses the loop if RAM is tight,
+                    // preventing OOM crashes on large folders.
+                    await MemoryGuard.ThrottleIfNeededAsync();
+
                     _registry.ScanFile(displayName, displayName, safUri: documentUri);
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
                 }
             });
-            if (_memLimitAndroid)
-                error = $"Stopped at {_loadDone}/{_loadTotal} files — RAM too low ({MemoryGuard.GetStatusString()}). {_registry.Count} assets loaded.";
 #else
             string? folderPath = null;
 #if WINDOWS
@@ -1236,30 +1249,22 @@
             _loadTotal = files.Length;
             StateHasChanged();
 
-            bool _memLimitDesktop = false;
             await Task.Run(async () =>
             {
                 foreach (var filePath in files)
                 {
-                    // FIX: check available RAM before each bundle.
-                    // If RAM is critically low, try to recover via GC first.
-                    // If memory is still too low after recovery, stop loading
-                    // rather than crash the app.
-                    if (MemoryGuard.IsMemoryLow())
-                    {
-                        bool recovered = await MemoryGuard.TryRecoverAsync();
-                        if (!recovered) { _memLimitDesktop = true; break; }
-                    }
+                    // FIX: Yield to memory guard before each bundle scan.
+                    await MemoryGuard.ThrottleIfNeededAsync();
+
                     _registry.ScanFile(filePath, Path.GetFileName(filePath));
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
                 }
             });
-            if (_memLimitDesktop)
-                error = $"Stopped at {_loadDone}/{_loadTotal} files — RAM too low ({MemoryGuard.GetStatusString()}). {_registry.Count} assets loaded.";
 #endif
             _filterDirty = true;
+            _availableTypesDirty = true;
             bundleFileName = $"{_registry.Count} assets · {bundleFileName}";
             if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
                 error = $"0 assets loaded. First error: {_registry.ScanErrors[0]}";
@@ -1381,23 +1386,8 @@
             using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
             {
                 var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                // FIX: Track the currently open bundle slot so we can release it
-                // when we move to the next bundle. Previously ALL bundles were opened
-                // and kept alive simultaneously for the entire export, causing a RAM spike
-                // proportional to (number of bundles × average bundle size).
-                int exportActiveSlot = -1;
-
                 foreach (var desc in list)
                 {
-                    // Release the previous bundle when we switch to a new one
-                    if (exportActiveSlot >= 0 && exportActiveSlot != desc.BundleSlot)
-                    {
-                        _registry.ReleaseSlot(exportActiveSlot);
-                        GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
-                    }
-                    exportActiveSlot = desc.BundleSlot;
-
                     try
                     {
                         var af = await _registry.GetLiveFileAsync(desc);
@@ -1454,10 +1444,6 @@
                     }
                     catch { /* skip failed asset */ }
                 }
-
-                // Release the last open slot when done
-                if (exportActiveSlot >= 0)
-                    _registry.ReleaseSlot(exportActiveSlot);
             }
             zipStream.Position = 0;
             var zipName = SafeName(Path.GetFileNameWithoutExtension(bundleFileName));
