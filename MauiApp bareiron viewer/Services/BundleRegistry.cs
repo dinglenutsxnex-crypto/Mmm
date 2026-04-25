@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AssetsTools.NET;
@@ -68,7 +66,7 @@ internal sealed class BundleSlot
                 {
                     OpenManager = new AssetsManager();
                     using var stream = AndroidDownloadService.OpenSafStream(SafUri);
-                    using var ms = new MemoryStream();
+                    var ms = new MemoryStream();
                     stream.CopyTo(ms);
                     ms.Position = 0;
                     var bundle = OpenManager.LoadBundleFile(ms, FilePath, unpackIfPacked: true);
@@ -144,16 +142,6 @@ public sealed class BundleRegistry : IDisposable
 
         try
         {
-            // Throttle memory usage before loading this bundle
-#if ANDROID
-            try { MemoryMonitor.Instance.ThrottleIfNeededAsync().GetAwaiter().GetResult(); }
-            catch (OutOfMemoryException)
-            {
-                ScanErrors.Add($"{displayName}: Insufficient memory to load bundle");
-                return;
-            }
-#endif
-
             var mgr = new AssetsManager();
             bool any = false;
             try
@@ -161,23 +149,28 @@ public sealed class BundleRegistry : IDisposable
 #if ANDROID
                 if (safUri != null)
                 {
-                    using var stream = AndroidDownloadService.OpenSafStream(safUri);
-                    using var ms = new MemoryStream();
-                    stream.CopyTo(ms);
-                    ms.Position = 0;
-                    var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
-                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                    for (int i = 0; i < dirs.Count; i++)
+                    MemoryStream? ms = null;
+                    try
                     {
-                        try
+                        using var stream = AndroidDownloadService.OpenSafStream(safUri);
+                        ms = new MemoryStream();
+                        stream.CopyTo(ms);
+                        ms.Position = 0;
+                        var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
+                        var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                        for (int i = 0; i < dirs.Count; i++)
                         {
-                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                            if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, slotIndex, i);
-                            any = true;
+                            try
+                            {
+                                var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                                if (af?.file?.AssetInfos == null) continue;
+                                ScanSubFile(af, mgr, slotIndex, i);
+                                any = true;
+                            }
+                            catch { }
                         }
-                        catch { }
                     }
+                    finally { ms?.Dispose(); }
                 }
                 else
 #endif
@@ -282,14 +275,10 @@ public sealed class BundleRegistry : IDisposable
             {
                 try
                 {
-                    var reader = af.file.Reader;
-                    reader.Position = info.absoluteFilePos + nameOffset;
-                    int strLen = reader.ReadInt32();
-                    if (strLen > 0 && strLen < 512)
-                    {
-                        byte[] strBytes = reader.ReadBytes(strLen);
-                        name = Encoding.UTF8.GetString(strBytes);
-                    }
+                    var bf        = mgr.GetBaseField(af, info);
+                    var nameField = bf["m_Name"];
+                    name = nameField.IsDummy ? "" : (nameField.AsString ?? "");
+                    bf   = null!; // drop ref so GC can collect
                 }
                 catch { }
 
@@ -321,25 +310,10 @@ public sealed class BundleRegistry : IDisposable
             _slots[slot].Release();
     }
 
-    private const int MaxDescriptorCapacity = 1_000_000; // 1M descriptors max
-
     private void EnsureCapacity(int needed)
     {
         if (needed <= _descriptors.Length) return;
-        
-        int currentSize = _descriptors.Length;
-        if (currentSize == 0) currentSize = 256;
-        
-        // Double the size, but cap at MaxDescriptorCapacity to prevent unbounded growth
-        long newSizeLong = currentSize * 2L;
-        if (newSizeLong > MaxDescriptorCapacity) newSizeLong = MaxDescriptorCapacity;
-        
-        // Always ensure we have at least what we need
-        if (newSizeLong < needed) newSizeLong = needed;
-        
-        // Final safety cap
-        int newSize = (int)Math.Min(newSizeLong, MaxDescriptorCapacity);
-        
+        int newSize = Math.Max(needed, Math.Max(1024, _descriptors.Length * 2));
         Array.Resize(ref _descriptors, newSize);
     }
 
