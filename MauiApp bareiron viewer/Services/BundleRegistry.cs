@@ -284,6 +284,10 @@ public sealed class BundleRegistry : IDisposable
     public string GetBundleName(int slot)
         => slot >= 0 && slot < _slots.Count ? _slots[slot].DisplayName : "";
 
+    public BundleSlot? FindSlotForBundle(BundleFileInstance bi)
+        => _slots.FirstOrDefault(s => s.OpenManager != null &&
+               s.OpenManager.Files.Any(f => f.parentBundle == bi));
+
     private void EnsureCapacity(int needed)
     {
         if (needed <= _descriptors.Length) return;

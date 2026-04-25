@@ -1489,8 +1489,29 @@
                             var di = BundleHelper.GetDirInfo(bi.file, sp);
                             if (di != null)
                             {
-                                bi.file.DataReader.Position = di.Offset + (long)so;
-                                imageData = bi.file.DataReader.ReadBytes((int)ss);
+                                long absOffset = di.Offset + (long)so;
+                                var slot = _registry.FindSlotForBundle(bi);
+#if ANDROID
+                                if (slot?.SafUri != null)
+                                {
+                                    using var safStream = AndroidDownloadService.OpenSafStream(slot.SafUri);
+                                    safStream.Seek(absOffset, SeekOrigin.Begin);
+                                    var buf = new byte[ss];
+                                    int read = 0;
+                                    while (read < (int)ss)
+                                    {
+                                        int n = safStream.Read(buf, read, (int)ss - read);
+                                        if (n <= 0) break;
+                                        read += n;
+                                    }
+                                    imageData = buf;
+                                }
+                                else
+#endif
+                                {
+                                    bi.file.DataReader.Position = absOffset;
+                                    imageData = bi.file.DataReader.ReadBytes((int)ss);
+                                }
                             }
                         }
                     }
@@ -1507,11 +1528,11 @@
             try
             {
                 var decoded = BareIronTextureDecoder.Decode(imageData, width, height, af);
-                return new TextureDecodeResult { RgbaData = decoded, Width = width, Height = height, FormatId = af, FormatName = BareIronTextureDecoder.GetFormatName(format), SwapRB = false };
+                return new TextureDecodeResult { RgbaData = decoded, Width = width, Height = height, FormatId = af, FormatName = GetFormatName(format), SwapRB = false };
             }
             catch (Exception decEx)
             {
-                return new TextureDecodeResult { RgbaData = imageData, Width = width, Height = height, FormatId = format, FormatName = BareIronTextureDecoder.GetFormatName(format), SwapRB = false, Error = $"Decode failed: {decEx.Message}" };
+                return new TextureDecodeResult { RgbaData = imageData, Width = width, Height = height, FormatId = format, FormatName = GetFormatName(format), SwapRB = false, Error = $"Decode failed: {decEx.Message}" };
             }
         }
         catch (Exception ex) { return new TextureDecodeResult { Error = $"Error: {ex.Message}" }; }
