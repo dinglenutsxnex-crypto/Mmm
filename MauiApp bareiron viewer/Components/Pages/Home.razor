@@ -1029,6 +1029,7 @@
 
     // ── Selected asset (descriptor value) ─────────────────────────────────────
     AssetDescriptor? selectedDesc;
+    int              _lastOpenSlot = -1;
 
     // ── UI state ──────────────────────────────────────────────────────────────
     string searchQuery = "";
@@ -1255,6 +1256,9 @@
 
     async Task SelectDescriptor(AssetDescriptor desc)
     {
+        if (_lastOpenSlot >= 0 && _lastOpenSlot != desc.BundleSlot)
+            _registry.ReleaseSlot(_lastOpenSlot);
+
         selectedDesc = desc;
         inspectorFields = null; textureResult = null; meshResult = null;
         inspectorLoading = true; textureLoading = true; meshLoading = desc.Type == "Mesh";
@@ -1268,6 +1272,7 @@
         {
             var af = await _registry.GetLiveFileAsync(desc);
             if (af == null) { inspectorLoading = false; textureLoading = false; meshLoading = false; return; }
+            _lastOpenSlot = desc.BundleSlot;
 
             await Task.Run(() =>
             {

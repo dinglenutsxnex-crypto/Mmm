@@ -114,6 +114,7 @@ public sealed class BundleRegistry : IDisposable
     private readonly List<BundleSlot>  _slots       = new();
     private          AssetDescriptor[] _descriptors = Array.Empty<AssetDescriptor>();
     private          int               _count       = 0;
+    private          int               _scansSinceLastGc = 0;
 
     public ReadOnlySpan<AssetDescriptor> All   => _descriptors.AsSpan(0, _count);
     public int                           Count => _count;
@@ -125,6 +126,7 @@ public sealed class BundleRegistry : IDisposable
         _slots.Clear();
         _descriptors = Array.Empty<AssetDescriptor>();
         _count = 0;
+        _scansSinceLastGc = 0;
         ScanErrors.Clear();
     }
 
@@ -147,23 +149,28 @@ public sealed class BundleRegistry : IDisposable
 #if ANDROID
                 if (safUri != null)
                 {
-                    using var stream = AndroidDownloadService.OpenSafStream(safUri);
-                    var ms = new MemoryStream();
-                    stream.CopyTo(ms);
-                    ms.Position = 0;
-                    var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
-                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                    for (int i = 0; i < dirs.Count; i++)
+                    MemoryStream? ms = null;
+                    try
                     {
-                        try
+                        using var stream = AndroidDownloadService.OpenSafStream(safUri);
+                        ms = new MemoryStream();
+                        stream.CopyTo(ms);
+                        ms.Position = 0;
+                        var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
+                        var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                        for (int i = 0; i < dirs.Count; i++)
                         {
-                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                            if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, mgr, slotIndex, i);
-                            any = true;
+                            try
+                            {
+                                var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                                if (af?.file?.AssetInfos == null) continue;
+                                ScanSubFile(af, mgr, slotIndex, i);
+                                any = true;
+                            }
+                            catch { }
                         }
-                        catch { }
                     }
+                    finally { ms?.Dispose(); }
                 }
                 else
 #endif
@@ -202,9 +209,16 @@ public sealed class BundleRegistry : IDisposable
                 }
             }
 
-            // mgr goes out of scope. Hint gen-0 GC to free decompressed bundle data
-            // before the next file is scanned. Prevents N dead managers piling up.
-            GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
+            _scansSinceLastGc++;
+            if (_scansSinceLastGc >= 50)
+            {
+                _scansSinceLastGc = 0;
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            }
+            else
+            {
+                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
+            }
 
             if (!any || _count == countBefore) { _count = countBefore; return; }
         }
@@ -289,6 +303,12 @@ public sealed class BundleRegistry : IDisposable
 
     public string GetBundleName(int slot)
         => slot >= 0 && slot < _slots.Count ? _slots[slot].DisplayName : "";
+
+    public void ReleaseSlot(int slot)
+    {
+        if (slot >= 0 && slot < _slots.Count)
+            _slots[slot].Release();
+    }
 
     private void EnsureCapacity(int needed)
     {
