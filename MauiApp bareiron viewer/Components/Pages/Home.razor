@@ -5,7 +5,6 @@
 @using MauiApp_bareiron_viewer.Services
 @using System.IO
 @using System.IO.Compression
-@using System.Linq
 @using System.Text.Json
 @inject IJSRuntime JS
 @implements IDisposable
@@ -1030,7 +1029,6 @@
 
     // ── Selected asset (descriptor value) ─────────────────────────────────────
     AssetDescriptor? selectedDesc;
-    int              _lastOpenSlot = -1;
 
     // ── UI state ──────────────────────────────────────────────────────────────
     string searchQuery = "";
@@ -1061,27 +1059,9 @@
     bool meshLoading;
 
     // Available types for filter dropdown (rebuilt when registry changes)
-    // Cache AvailableTypes — the old version called .ToArray() on the full span
-    // every render frame, creating a large heap copy each time.
-    List<string> _availableTypesCache = new();
-    bool _availableTypesDirty = true;
-
-    IReadOnlyList<string> AvailableTypes
-    {
-        get
-        {
-            if (!_availableTypesDirty) return _availableTypesCache;
-            _availableTypesDirty = false;
-            var all = _registry.All;
-            var seen = new HashSet<string>();
-            _availableTypesCache.Clear();
-            for (int i = 0; i < all.Length; i++)
-                if (seen.Add(all[i].Type))
-                    _availableTypesCache.Add(all[i].Type);
-            _availableTypesCache.Sort(StringComparer.Ordinal);
-            return _availableTypesCache;
-        }
-    }
+    IReadOnlyList<string> AvailableTypes =>
+        _registry.All.ToArray()
+            .Select(a => a.Type).Distinct().OrderBy(t => t).ToList();
 
     // ── Download helpers ─────────────────────────────────────────────────────
     async Task TriggerDownload(string filename, byte[] bytes, string mimeType)
@@ -1181,12 +1161,9 @@
             await Task.Run(() => _registry.ScanFile(result.FullPath, result.FileName));
 
             _filterDirty = true;
-            _availableTypesDirty = true;
             bundleFileName = $"{_registry.Count} assets";
             if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
                 error = $"0 assets loaded. Error: {_registry.ScanErrors[0]}";
-            else if (_registry.SkippedFontBundles.Count > 0)
-                error = "Font bundle skipped (crash prevention).";
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }
@@ -1215,22 +1192,14 @@
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
-            const int BatchSize = 50;
             await Task.Run(async () =>
             {
-                for (int b = 0; b < safFiles.Count; b += BatchSize)
+                foreach (var (displayName, documentUri) in safFiles)
                 {
-                    foreach (var (displayName, documentUri) in safFiles.Skip(b).Take(BatchSize))
-                    {
-                        _registry.ScanFile(displayName, displayName, safUri: documentUri);
-                        _loadDone++;
-                        if (_loadDone % 5 == 0)
-                            await InvokeAsync(StateHasChanged);
-                    }
-                    // Flush AssetsTools internal type caches that accumulate across ScanFile calls
-                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-                    GC.WaitForPendingFinalizers();
-                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                    _registry.ScanFile(displayName, displayName, safUri: documentUri);
+                    _loadDone++;
+                    if (_loadDone % 5 == 0)
+                        await InvokeAsync(StateHasChanged);
                 }
             });
 #else
@@ -1256,30 +1225,21 @@
 
             await Task.Run(async () =>
             {
-                for (int b = 0; b < files.Length; b += BatchSize)
+                foreach (var filePath in files)
                 {
-                    foreach (var filePath in files.Skip(b).Take(BatchSize))
-                    {
-                        _registry.ScanFile(filePath, Path.GetFileName(filePath));
-                        _loadDone++;
-                        if (_loadDone % 5 == 0)
-                            await InvokeAsync(StateHasChanged);
-                    }
-                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-                    GC.WaitForPendingFinalizers();
-                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                    _registry.ScanFile(filePath, Path.GetFileName(filePath));
+                    _loadDone++;
+                    if (_loadDone % 5 == 0)
+                        await InvokeAsync(StateHasChanged);
                 }
             });
 #endif
             _filterDirty = true;
-            _availableTypesDirty = true;
             bundleFileName = $"{_registry.Count} assets · {bundleFileName}";
             if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
                 error = $"0 assets loaded. First error: {_registry.ScanErrors[0]}";
             else if (_registry.ScanErrors.Count > 0)
                 error = $"{_registry.ScanErrors.Count} file(s) skipped. First: {_registry.ScanErrors[0]}";
-            else if (_registry.SkippedFontBundles.Count > 0)
-                error = $"{_registry.SkippedFontBundles.Count} font bundle(s) skipped (crash prevention).";
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }
@@ -1295,9 +1255,6 @@
 
     async Task SelectDescriptor(AssetDescriptor desc)
     {
-        if (_lastOpenSlot >= 0 && _lastOpenSlot != desc.BundleSlot)
-            _registry.ReleaseSlot(_lastOpenSlot);
-
         selectedDesc = desc;
         inspectorFields = null; textureResult = null; meshResult = null;
         inspectorLoading = true; textureLoading = true; meshLoading = desc.Type == "Mesh";
@@ -1311,7 +1268,6 @@
         {
             var af = await _registry.GetLiveFileAsync(desc);
             if (af == null) { inspectorLoading = false; textureLoading = false; meshLoading = false; return; }
-            _lastOpenSlot = desc.BundleSlot;
 
             await Task.Run(() =>
             {
@@ -1546,7 +1502,7 @@
 
             int af  = format;
             int expectedRgba8 = ((width + 3) / 4) * ((height + 3) / 4) * 16;
-            if (format == 47 && imageData.Length >= expectedRgba8) { af = 48; }
+            if (format == 47 && imageData.Length >= expectedRgba8) { af = 49; }
 
             try
             {

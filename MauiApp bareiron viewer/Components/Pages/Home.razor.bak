@@ -1,0 +1,655 @@
+@page "/"
+@layout EmptyLayout
+@using AssetsTools.NET
+@using AssetsTools.NET.Extra
+@using MauiApp_bareiron_viewer.Services
+@using System.IO
+@using System.IO.Compression
+@using System.Text.Json
+@inject IJSRuntime JS
+
+<style>
+    :root {
+        --bg: #1e1e1e; --panel: #252526; --header: #333333;
+        --text: #cccccc; --accent: #007acc; --border: #3e3e42;
+        --hover: #2a2d2e; --active: #37373d; --terminal-green: #4af626;
+        --highlight: #094771; --danger: #d63031; --success: #00b894;
+        --row-height: 28px;
+    }
+    .bi-root { display:flex; flex-direction:column; height:100vh; background:var(--bg); color:var(--text); font-family:'Segoe UI',sans-serif; overflow:hidden; user-select:none; }
+    .bi-nav { height:45px; background:var(--header); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 15px; flex-shrink:0; z-index:20; }
+    .bi-nav-title { font-weight:700; font-size:15px; letter-spacing:0.5px; background:linear-gradient(to right,#ff8c00,#ff0000); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    .bi-nav-controls { display:flex; gap:6px; align-items:center; }
+    .bi-btn { background:transparent; border:1px solid transparent; color:#ccc; padding:5px 10px; border-radius:3px; cursor:pointer; font-size:13px; transition:all 0.15s; display:flex; align-items:center; gap:5px; font-family:'Segoe UI',sans-serif; }
+    .bi-btn:hover { background:rgba(255,255,255,0.1); color:white; }
+    .bi-btn:active { background:rgba(255,255,255,0.2); }
+    .bi-btn:disabled { opacity:0.4; cursor:default; }
+    .bi-btn:disabled:hover { background:transparent; color:#ccc; }
+    .bi-main { display:flex; flex:1; overflow:hidden; }
+    .bi-assets-panel { width:400px; min-width:150px; background:#202020; display:flex; flex-direction:column; overflow:hidden; flex-shrink:0; }
+    .bi-panel-header { height:36px; background:#2d2d2d; border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 10px; gap:8px; flex-shrink:0; }
+    .bi-search { flex:1; background:#111; border:1px solid #444; color:white; padding:4px 8px; border-radius:3px; font-size:12px; outline:none; font-family:'Segoe UI',sans-serif; }
+    .bi-search:focus { border-color:var(--accent); }
+    .bi-count { font-size:11px; color:#666; white-space:nowrap; }
+    .bi-table-wrap { flex:1; overflow-y:auto; overflow-x:hidden; }
+    .bi-table-wrap::-webkit-scrollbar { width:8px; }
+    .bi-table-wrap::-webkit-scrollbar-track { background:#1a1a1a; }
+    .bi-table-wrap::-webkit-scrollbar-thumb { background:#555; border-radius:2px; }
+    .bi-table-wrap::-webkit-scrollbar-thumb:hover { background:#777; }
+    table.bi-table { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
+    table.bi-table thead { position:sticky; top:0; z-index:5; background:#2d2d2d; }
+    table.bi-table th { padding:6px 8px; text-align:left; font-size:11px; font-weight:600; color:#888; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.4px; white-space:nowrap; overflow:hidden; }
+    table.bi-table td { padding:0 8px; height:var(--row-height); border-bottom:1px solid #2a2a2a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .col-pathid { width:70px; } .col-type { width:110px; } .col-name { width:auto; }
+    .col-size { width:65px; text-align:right; padding-right:12px !important; }
+    table.bi-table tbody tr { cursor:pointer; }
+    table.bi-table tbody tr:hover { background:var(--hover); }
+    table.bi-table tbody tr.selected { background:var(--highlight) !important; color:white; }
+    .bi-empty { text-align:center; color:#555; padding:40px 0; font-size:13px; }
+    .type-cell { display:flex; align-items:center; gap:5px; height:100%; }
+    .type-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .bi-drag { width:5px; background:var(--border); cursor:col-resize; transition:background 0.2s; flex-shrink:0; }
+    .bi-drag:hover { background:var(--accent); }
+    .bi-inspector-panel { flex:1; background:var(--bg); display:flex; flex-direction:column; overflow:hidden; min-width:100px; }
+    .bi-inspector-header { height:36px; background:#2d2d2d; border-bottom:1px solid var(--border); display:flex; align-items:center; flex-shrink:0; }
+    .bi-tab { background:transparent; border:none; color:#888; font-size:12px; padding:0 15px; cursor:pointer; height:100%; border-bottom:2px solid transparent; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; font-family:'Segoe UI',sans-serif; }
+    .bi-tab:hover { color:#ccc; background:rgba(255,255,255,0.05); }
+    .bi-tab.active { color:white; border-bottom-color:var(--accent); }
+    .bi-inspector-body { flex:1; overflow-y:auto; padding:12px; font-size:12px; }
+    .bi-inspector-body::-webkit-scrollbar { width:8px; }
+    .bi-inspector-body::-webkit-scrollbar-track { background:#1a1a1a; }
+    .bi-inspector-body::-webkit-scrollbar-thumb { background:#555; border-radius:2px; }
+    .bi-no-select { color:#555; font-size:13px; margin:40px auto; text-align:center; }
+    .field-tree { font-family:'Consolas',monospace; font-size:11px; }
+    .field-node { display:flex; flex-direction:column; }
+    .field-row { display:flex; align-items:baseline; padding:2px 0; border-bottom:1px solid #2a2a2a; font-size:11px; line-height:1.6; gap:8px; font-family:'Consolas',monospace; }
+    .field-type { color:#569cd6; flex-shrink:0; white-space:nowrap; }
+    .field-name { color:#9cdcfe; flex-shrink:0; white-space:nowrap; }
+    .field-value { color:#ce9178; word-break:break-all; }
+    .field-children { padding-left:16px; border-left:1px solid #333; margin-left:8px; }
+    .field-header { font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid var(--border); }
+    .asset-title { font-size:14px; font-weight:600; color:white; margin-bottom:4px; }
+    .asset-subtitle { font-size:11px; color:#888; margin-bottom:8px; }
+    .bi-loading { display:flex; align-items:center; gap:10px; color:#888; font-size:13px; padding:20px; }
+    .spinner { width:16px; height:16px; border:2px solid #444; border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; flex-shrink:0; }
+    @@keyframes spin { to { transform:rotate(360deg); } }
+    .bi-error { background:#2d1a1a; border:1px solid #5a2d2d; color:#f48771; padding:8px 12px; border-radius:3px; font-size:12px; margin:8px; font-family:'Consolas',monospace; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:200; display:flex; align-items:center; justify-content:center; }
+    .modal-box { background:#2d2d2d; border:1px solid #555; border-radius:6px; padding:20px 24px; min-width:220px; display:flex; flex-direction:column; gap:12px; box-shadow:0 8px 24px rgba(0,0,0,0.5); }
+    .modal-title { font-size:13px; font-weight:700; color:#ccc; text-transform:uppercase; letter-spacing:0.5px; }
+    .modal-btns { display:flex; gap:8px; }
+    .modal-btn { flex:1; padding:8px 0; background:#383838; border:1px solid #555; color:#ccc; border-radius:4px; cursor:pointer; font-size:13px; font-family:'Segoe UI',sans-serif; transition:all 0.15s; }
+    .modal-btn:hover { background:#444; color:white; border-color:#777; }
+    .modal-cancel { background:transparent; border:none; color:#666; font-size:12px; cursor:pointer; text-align:center; padding:0; font-family:'Segoe UI',sans-serif; }
+    .modal-cancel:hover { color:#aaa; }
+</style>
+
+<div class="bi-root">
+
+    <div class="bi-nav">
+        <div class="bi-nav-title">⬡ Bareiron Asset Explorer</div>
+        <div class="bi-nav-controls">
+            <button class="bi-btn" @onclick="PickFile" disabled="@loading">
+                📂 Load Bundle
+            </button>
+            <button class="bi-btn" @onclick="ExportSelected" disabled="@(selectedAsset == null || loading || (inspectorLoading || textureLoading || meshLoading))">
+                💾 Export
+            </button>
+            @if (!string.IsNullOrEmpty(bundleFileName))
+            {
+                <span style="font-size:12px; color:#666; padding: 0 6px;">@bundleFileName</span>
+            }
+        </div>
+    </div>
+
+    <div class="bi-main">
+
+        <div class="bi-assets-panel">
+            <div class="bi-panel-header">
+                <input class="bi-search"
+                       type="text"
+                       placeholder="Search assets (name, type, path ID)..."
+                       @bind="searchQuery"
+                       @bind:event="oninput" />
+                <span class="bi-count">@FilteredAssets.Count assets</span>
+            </div>
+
+            <div class="bi-table-wrap">
+                @if (loading)
+                {
+                    <div class="bi-loading"><div class="spinner"></div>Loading bundle...</div>
+                }
+                else if (!string.IsNullOrEmpty(error))
+                {
+                    <div class="bi-error">@error</div>
+                }
+                else if (assets.Count == 0)
+                {
+                    <div class="bi-empty">Load a .bundle or .assets file to begin</div>
+                }
+                else
+                {
+                    <table class="bi-table">
+                        <thead>
+                            <tr>
+                                <th class="col-pathid">Path ID</th>
+                                <th class="col-type">Type</th>
+                                <th class="col-name">Name</th>
+                                <th class="col-size">Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var a in FilteredAssets)
+                            {
+                                <tr class="@(selectedAsset?.PathId == a.PathId ? "selected" : "")"
+                                    @onclick="() => SelectAsset(a)">
+                                    <td class="col-pathid" style="color:#666; font-family:Consolas,monospace;">@a.PathId</td>
+                                    <td class="col-type">
+                                        <div class="type-cell">
+                                            <div class="type-dot" style="background:@GetTypeColor(a.Type)"></div>
+                                            @a.Type
+                                        </div>
+                                    </td>
+                                    <td class="col-name">@(string.IsNullOrEmpty(a.Name) ? "(unnamed)" : a.Name)</td>
+                                    <td class="col-size" style="color:#666; font-family:Consolas,monospace;">@FormatSize(a.Size)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+
+        <div class="bi-drag"></div>
+
+        <div class="bi-inspector-panel">
+            <div class="bi-inspector-header">
+                <button class="bi-tab active">Inspector</button>
+            </div>
+            <div class="bi-inspector-body">
+                @if (selectedAsset == null)
+                {
+                    <div class="bi-no-select">Select an asset to inspect</div>
+                }
+                else
+                {
+                    <div class="asset-title">@(string.IsNullOrEmpty(selectedAsset.Name) ? "(unnamed)" : selectedAsset.Name)</div>
+                    <div class="asset-subtitle">@selectedAsset.Type · PathID @selectedAsset.PathId · @FormatSize(selectedAsset.Size)</div>
+
+                    @if (selectedAsset.Type == "Texture2D" || selectedAsset.Type == "Sprite")
+                    {
+                        <div class="field-header">Preview</div>
+                        <TexturePreview Result="textureResult" Loading="textureLoading" AssetName="@selectedAsset.Name" />
+                    }
+
+                    @if (selectedAsset.Type == "Mesh")
+                    {
+                        <div class="field-header">Preview</div>
+                        <MeshPreview MeshData="meshResult" Loading="meshLoading" AssetName="@selectedAsset.Name" RawFields="inspectorFields" />
+                    }
+
+                    @if (inspectorFields != null)
+                    {
+                        <div class="field-header">Fields</div>
+                        @RenderFields(inspectorFields)
+                    }
+                    else if (inspectorLoading)
+                    {
+                        <div class="bi-loading"><div class="spinner"></div> Parsing fields...</div>
+                    }
+                }
+            </div>
+        </div>
+
+    </div>
+
+    @if (showMeshExportModal)
+    {
+        <div class="modal-overlay" @onclick="@(() => showMeshExportModal = false)">
+            <div class="modal-box" @onclick:stopPropagation="true">
+                <div class="modal-title">Export Mesh As</div>
+                <div class="modal-btns">
+                    <button class="modal-btn" @onclick="@(() => ExportMeshAs("glb"))">💾 .glb</button>
+                    <button class="modal-btn" @onclick="@(() => ExportMeshAs("obj"))">📄 .obj</button>
+                </div>
+                <button class="modal-cancel" @onclick="@(() => showMeshExportModal = false)">Cancel</button>
+            </div>
+        </div>
+    }
+
+</div>
+
+@code {
+    record AssetEntry(long PathId, string Type, string Name, long Size);
+
+    List<AssetEntry> assets = new();
+    AssetEntry? selectedAsset;
+    string searchQuery = "";
+    string error = "";
+    string bundleFileName = "";
+    bool loading = false;
+    bool inspectorLoading = false;
+    bool showMeshExportModal = false;
+
+    AssetsManager? manager;
+    BundleFileInstance? bundleInst;
+    AssetsFileInstance? assetsFileInst;
+
+    AssetTypeValueField? inspectorFields;
+    TextureDecodeResult? textureResult;
+    bool textureLoading;
+    MeshParseResult? meshResult;
+    bool meshLoading;
+
+    List<AssetEntry> FilteredAssets => string.IsNullOrWhiteSpace(searchQuery)
+        ? assets
+        : assets.Where(a =>
+            a.Name.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+            a.Type.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+            a.PathId.ToString().Contains(searchQuery)
+          ).ToList();
+
+    async Task PickFile()
+    {
+        try
+        {
+            loading = true;
+            error = "";
+            assets.Clear();
+            selectedAsset = null;
+            inspectorFields = null;
+            StateHasChanged();
+
+            var result = await FilePicker.Default.PickAsync();
+            if (result == null) { loading = false; return; }
+
+            bundleFileName = result.FileName;
+
+            await Task.Run(() =>
+            {
+                manager = new AssetsManager();
+                bundleInst = manager.LoadBundleFile(result.FullPath);
+                assetsFileInst = manager.LoadAssetsFileFromBundle(bundleInst, 0);
+
+                foreach (var info in assetsFileInst.file.AssetInfos)
+                {
+                    try
+                    {
+                        var baseField = manager.GetBaseField(assetsFileInst, info);
+                        var typeName = baseField.TypeName;
+                        var nameField = baseField["m_Name"];
+                        var assetName = nameField.IsDummy ? "" : nameField.AsString;
+                        assets.Add(new AssetEntry(info.PathId, typeName, assetName, info.ByteSize));
+                    }
+                    catch
+                    {
+                        assets.Add(new AssetEntry(info.PathId, "Unknown", "", info.ByteSize));
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    async Task SelectAsset(AssetEntry entry)
+    {
+        selectedAsset = entry;
+        inspectorFields = null;
+        textureResult = null;
+        meshResult = null;
+        inspectorLoading = true;
+        textureLoading = true;
+        meshLoading = entry.Type == "Mesh";
+        StateHasChanged();
+
+        TextureDecodeResult? localTexResult = null;
+        MeshParseResult? localMeshResult = null;
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                if (manager == null || assetsFileInst == null) return;
+                var info = assetsFileInst.file.AssetInfos.FirstOrDefault(a => a.PathId == entry.PathId);
+                if (info == null) return;
+                inspectorFields = manager.GetBaseField(assetsFileInst, info);
+
+                if (entry.Type == "Texture2D" && inspectorFields != null)
+                {
+                    try
+                    {
+                        var widthField = inspectorFields["m_Width"];
+                        var heightField = inspectorFields["m_Height"];
+                        var formatField = inspectorFields["m_TextureFormat"];
+                        var imageDataField = inspectorFields["image data"];
+                        var streamDataField = inspectorFields["m_StreamData"];
+
+                        int width = widthField?.AsInt ?? 0;
+                        int height = heightField?.AsInt ?? 0;
+                        int format = formatField?.AsInt ?? 0;
+
+                        byte[] imageData = imageDataField?.AsByteArray;
+
+                        if ((imageData == null || imageData.Length == 0) && streamDataField != null)
+                        {
+                            var pathField = streamDataField["path"];
+                            var offsetField = streamDataField["offset"];
+                            var sizeField = streamDataField["size"];
+                            string streamPath = pathField?.AsString ?? "";
+                            ulong streamOffset = offsetField?.AsULong ?? 0;
+                            uint streamSize = sizeField?.AsUInt ?? 0;
+
+                            if (!string.IsNullOrEmpty(streamPath) && streamSize > 0)
+                            {
+                                try
+                                {
+                                    var bi = assetsFileInst.parentBundle;
+                                    if (bi != null)
+                                    {
+                                        string searchPath = streamPath;
+                                        if (searchPath.StartsWith("archive:/"))
+                                            searchPath = searchPath.Substring(9);
+                                        searchPath = Path.GetFileName(searchPath);
+                                        var reader = bi.file.DataReader;
+                                        var dirInfo = BundleHelper.GetDirInfo(bi.file, searchPath);
+                                        if (dirInfo != null)
+                                        {
+                                            reader.Position = dirInfo.Offset + (long)streamOffset;
+                                            imageData = reader.ReadBytes((int)streamSize);
+                                        }
+                                    }
+                                }
+                                catch (Exception extEx)
+                                {
+                                    localTexResult = new TextureDecodeResult { Error = $"External load failed: {extEx.Message}" };
+                                }
+                            }
+                        }
+
+                        if (imageData == null || imageData.Length == 0)
+                        {
+                            localTexResult = new TextureDecodeResult { Error = "No image data (texture may be stripped)" };
+                        }
+                        else
+                        {
+                            try
+                            {
+                                int expectedRgba8 = ((width + 3) / 4) * ((height + 3) / 4) * 16;
+                                int actualFormat = format;
+                                string actualFormatName = GetFormatName(format);
+                                if (format == 47 && imageData.Length >= expectedRgba8)
+                                {
+                                    actualFormat = 49;
+                                    actualFormatName = "ETC2_RGBA8";
+                                }
+                                var decodedData = BareIronTextureDecoder.Decode(imageData, width, height, actualFormat);
+                                localTexResult = new TextureDecodeResult { RgbaData = decodedData, Width = width, Height = height, FormatId = actualFormat, FormatName = actualFormatName, SwapRB = false };
+                            }
+                            catch (Exception decEx)
+                            {
+                                localTexResult = new TextureDecodeResult { RgbaData = imageData, Width = width, Height = height, FormatId = format, FormatName = GetFormatName(format), SwapRB = false, Error = $"Decode failed: {decEx.Message}" };
+                            }
+                        }
+                    }
+                    catch (Exception texEx)
+                    {
+                        localTexResult = new TextureDecodeResult { Error = $"Error: {texEx.Message}" };
+                    }
+                }
+
+                if (entry.Type == "Mesh" && inspectorFields != null)
+                {
+                    localMeshResult = MeshParser.Parse(inspectorFields, assetsFileInst, info);
+                }
+            });
+
+            textureResult = localTexResult;
+            meshResult = localMeshResult;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            inspectorLoading = false;
+            textureLoading = false;
+            meshLoading = false;
+        }
+    }
+
+    async Task ExportSelected()
+    {
+        if (selectedAsset == null) return;
+        switch (selectedAsset.Type)
+        {
+            case "Texture2D":
+            case "Sprite":
+                await ExportTexturePng();
+                break;
+            case "Mesh":
+                showMeshExportModal = true;
+                StateHasChanged();
+                break;
+            default:
+                await ExportAssetJson();
+                break;
+        }
+    }
+
+    async Task ExportTexturePng()
+    {
+        if (textureResult?.Success != true || textureResult.RgbaData == null) return;
+        try
+        {
+            var png = EncodePng(textureResult.RgbaData, textureResult.Width, textureResult.Height);
+            var safeName = SafeName(selectedAsset?.Name ?? "texture");
+            await JS.InvokeVoidAsync("MeshViewer.downloadArrayBuffer", $"{safeName}.png", png);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Home] PNG export failed: {ex.Message}");
+        }
+    }
+
+    async Task ExportMeshAs(string format)
+    {
+        showMeshExportModal = false;
+        if (meshResult == null) return;
+        try
+        {
+            var safeName = SafeName(selectedAsset?.Name ?? "mesh");
+            var assetName = selectedAsset?.Name ?? "mesh";
+            if (format == "obj")
+            {
+                var obj = MeshExporter.ExportToObj(meshResult, assetName);
+                await JS.InvokeVoidAsync("MeshViewer.downloadFile", $"{safeName}.obj", obj, "model/obj");
+            }
+            else
+            {
+                var glb = MeshExporter.ExportToGlb(meshResult, assetName);
+                await JS.InvokeVoidAsync("MeshViewer.downloadArrayBuffer", $"{safeName}.glb", glb);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Home] Mesh export failed: {ex.Message}");
+        }
+    }
+
+    async Task ExportAssetJson()
+    {
+        if (selectedAsset == null || inspectorFields == null) return;
+        try
+        {
+            var safeName = SafeName(selectedAsset.Name ?? $"{selectedAsset.Type}_{selectedAsset.PathId}");
+            var data = new Dictionary<string, object?>
+            {
+                ["Asset"] = new { selectedAsset.PathId, selectedAsset.Type, selectedAsset.Name, selectedAsset.Size },
+                ["Fields"] = FieldToJson(inspectorFields)
+            };
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            await JS.InvokeVoidAsync("MeshViewer.downloadFile", $"{safeName}.json", json, "application/json");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Home] JSON export failed: {ex.Message}");
+        }
+    }
+
+    static object? FieldToJson(AssetTypeValueField field)
+    {
+        if (field.Children == null || field.Children.Count == 0)
+            return field.AsString;
+
+        if (field.TypeName == "Array")
+        {
+            return field.Children
+                .Where(c => c.FieldName != "size")
+                .Select(c => FieldToJson(c))
+                .ToList();
+        }
+
+        var dict = new Dictionary<string, object?>();
+        foreach (var child in field.Children)
+        {
+            var key = child.FieldName;
+            if (dict.ContainsKey(key))
+            {
+                int i = 1;
+                while (dict.ContainsKey($"{key}_{i}")) i++;
+                key = $"{key}_{i}";
+            }
+            dict[key] = FieldToJson(child);
+        }
+        return dict;
+    }
+
+    RenderFragment RenderFields(AssetTypeValueField field, int depth = 0) => builder =>
+    {
+        if (depth > 6) return;
+
+        if (field.Children != null && field.Children.Count > 0)
+        {
+            builder.OpenElement(0, "div");
+            builder.AddAttribute(1, "class", depth == 0 ? "field-tree" : "field-children");
+
+            foreach (var child in field.Children)
+            {
+                builder.OpenElement(2, "div");
+                builder.AddAttribute(3, "class", "field-node");
+
+                builder.OpenElement(4, "div");
+                builder.AddAttribute(5, "class", "field-row");
+
+                builder.OpenElement(6, "span");
+                builder.AddAttribute(7, "class", "field-type");
+                builder.AddContent(8, child.TypeName);
+                builder.CloseElement();
+
+                builder.OpenElement(9, "span");
+                builder.AddAttribute(10, "class", "field-name");
+                builder.AddContent(11, child.FieldName);
+                builder.CloseElement();
+
+                if (child.Children == null || child.Children.Count == 0)
+                {
+                    builder.OpenElement(12, "span");
+                    builder.AddAttribute(13, "class", "field-value");
+                    builder.AddContent(14, child.AsString);
+                    builder.CloseElement();
+                }
+
+                builder.CloseElement();
+
+                if (child.Children != null && child.Children.Count > 0)
+                    builder.AddContent(15, RenderFields(child, depth + 1));
+
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        }
+    };
+
+    static string SafeName(string name) =>
+        name.Replace("/", "_").Replace("\\", "_").Replace(" ", "_");
+
+    static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes}B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1}K";
+        return $"{bytes / (1024.0 * 1024):F1}M";
+    }
+
+    static string GetTypeColor(string type) => type switch
+    {
+        "Texture2D" => "#4ec9b0", "Sprite" => "#c586c0", "AudioClip" => "#f0a500",
+        "TextAsset" => "#9cdcfe", "Mesh" => "#ce9178", "Material" => "#569cd6",
+        "MonoBehaviour" => "#4af626", "GameObject" => "#dcdcaa", "Transform" => "#888888",
+        "Animator" => "#f48771", "AnimationClip" => "#f48771", "Shader" => "#d7ba7d",
+        _ => "#666666"
+    };
+
+    static string GetFormatName(int format) => format switch
+    {
+        3 => "RGB24", 4 => "RGBA32", 5 => "ARGB32", 7 => "DXT1", 10 => "DXT5",
+        13 => "BGRA32", 34 => "BC6H", 45 => "ETC_RGB4", 46 => "ETC_RGB4_3DS",
+        47 => "ETC2_RGB4", 48 => "ETC2_RGBA1", 49 => "ETC2_RGBA8",
+        52 => "BC4", 53 => "BC5", 54 => "BC6H_2", 55 => "BC7",
+        62 => "BC4_2", 63 => "BC5_2", 74 => "ASTC_4x4", 77 => "ASTC_8x8",
+        _ => "UNKNOWN"
+    };
+
+    static byte[] EncodePng(byte[] rgba, int width, int height)
+    {
+        using var file = new MemoryStream();
+        file.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+        WritePngChunk(file, "IHDR", w =>
+        {
+            WritePngU32BE(w, (uint)width); WritePngU32BE(w, (uint)height);
+            w.WriteByte(8); w.WriteByte(6); w.WriteByte(0); w.WriteByte(0); w.WriteByte(0);
+        });
+        using var scanlines = new MemoryStream();
+        using (var zlib = new ZLibStream(scanlines, CompressionLevel.Fastest, leaveOpen: true))
+        {
+            int stride = width * 4;
+            for (int y = 0; y < height; y++) { zlib.WriteByte(0); zlib.Write(rgba, y * stride, stride); }
+        }
+        WritePngChunk(file, "IDAT", w => w.Write(scanlines.ToArray()));
+        WritePngChunk(file, "IEND", _ => { });
+        return file.ToArray();
+    }
+
+    static void WritePngChunk(Stream dest, string type, Action<Stream> writeData)
+    {
+        using var body = new MemoryStream();
+        body.Write(System.Text.Encoding.ASCII.GetBytes(type));
+        writeData(body);
+        var bodyArr = body.ToArray();
+        var dataOnly = bodyArr[4..];
+        WritePngU32BE(dest, (uint)dataOnly.Length);
+        dest.Write(bodyArr);
+        WritePngU32BE(dest, PngCrc32(bodyArr));
+    }
+
+    static void WritePngU32BE(Stream s, uint v)
+    {
+        s.WriteByte((byte)(v >> 24)); s.WriteByte((byte)(v >> 16));
+        s.WriteByte((byte)(v >> 8));  s.WriteByte((byte)v);
+    }
+
+    static uint PngCrc32(byte[] data)
+    {
+        uint crc = 0xFFFFFFFF;
+        foreach (byte b in data) { crc ^= b; for (int i = 0; i < 8; i++) crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320 : crc >> 1; }
+        return crc ^ 0xFFFFFFFF;
+    }
+}

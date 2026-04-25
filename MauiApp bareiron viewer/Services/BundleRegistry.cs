@@ -66,10 +66,7 @@ internal sealed class BundleSlot
                 {
                     OpenManager = new AssetsManager();
                     using var stream = AndroidDownloadService.OpenSafStream(SafUri);
-                    var ms = new MemoryStream();
-                    stream.CopyTo(ms);
-                    ms.Position = 0;
-                    var bundle = OpenManager.LoadBundleFile(ms, FilePath, unpackIfPacked: true);
+                    var bundle = OpenManager.LoadBundleFile(stream, FilePath);
                     int count  = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
                     OpenFiles  = new AssetsFileInstance?[count];
                     for (int i = 0; i < count; i++)
@@ -106,26 +103,6 @@ internal sealed class BundleSlot
 }
 
 /// <summary>
-/// Unity type names that indicate font data. Bundles containing any of these
-/// are skipped entirely — corrupt font assets cause unbounded memory allocation
-/// during deserialization and will OOM-crash the process on low-RAM devices.
-/// </summary>
-internal static class FontTypeGuard
-{
-    private static readonly HashSet<string> BlockedTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Font",
-        "TMP_FontAsset",
-        "TMP_SpriteAsset",
-        "TextMeshProFont",
-        "FontDef",
-        "GUISkin",
-    };
-
-    public static bool IsBlocked(string typeName) => BlockedTypes.Contains(typeName);
-}
-
-/// <summary>
 /// Central registry. Holds only compact AssetDescriptor[] at rest.
 /// Full bundle files are opened on demand when an asset is clicked.
 /// </summary>
@@ -134,12 +111,10 @@ public sealed class BundleRegistry : IDisposable
     private readonly List<BundleSlot>  _slots       = new();
     private          AssetDescriptor[] _descriptors = Array.Empty<AssetDescriptor>();
     private          int               _count       = 0;
-    private          int               _scansSinceLastGc = 0;
 
     public ReadOnlySpan<AssetDescriptor> All   => _descriptors.AsSpan(0, _count);
     public int                           Count => _count;
     public List<string> ScanErrors { get; } = new();
-    public List<string> SkippedFontBundles { get; } = new();
 
     public void Clear()
     {
@@ -147,9 +122,7 @@ public sealed class BundleRegistry : IDisposable
         _slots.Clear();
         _descriptors = Array.Empty<AssetDescriptor>();
         _count = 0;
-        _scansSinceLastGc = 0;
         ScanErrors.Clear();
-        SkippedFontBundles.Clear();
     }
 
     /// <summary>
@@ -162,10 +135,6 @@ public sealed class BundleRegistry : IDisposable
         int slotIndex   = _slots.Count;
         int countBefore = _count;
 
-        const long BigBundleThreshold = 30L * 1024 * 1024;
-        bool isBigBundle = false;
-        try { isBigBundle = new FileInfo(filePath).Length > BigBundleThreshold; } catch { }
-
         try
         {
             var mgr = new AssetsManager();
@@ -175,34 +144,20 @@ public sealed class BundleRegistry : IDisposable
 #if ANDROID
                 if (safUri != null)
                 {
-                    MemoryStream? ms = null;
-                    try
+                    using var stream = AndroidDownloadService.OpenSafStream(safUri);
+                    var bundle = mgr.LoadBundleFile(stream, filePath);
+                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                    for (int i = 0; i < dirs.Count; i++)
                     {
-                        using var stream = AndroidDownloadService.OpenSafStream(safUri);
-                        ms = new MemoryStream();
-                        stream.CopyTo(ms);
-                        ms.Position = 0;
-                        var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
-                        var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                        for (int i = 0; i < dirs.Count; i++)
+                        try
                         {
-                            try
-                            {
-                                var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                                if (af?.file?.AssetInfos == null) continue;
-                                ScanSubFile(af, mgr, slotIndex, i, isBigBundle);
-                                any = true;
-                            }
-                            catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
-                            {
-                                _count = countBefore;
-                                SkippedFontBundles.Add(displayName);
-                                return;
-                            }
-                            catch { }
+                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                            if (af?.file?.AssetInfos == null) continue;
+                            ScanSubFile(af, mgr, slotIndex, i);
+                            any = true;
                         }
+                        catch { }
                     }
-                    finally { ms?.Dispose(); }
                 }
                 else
 #endif
@@ -215,24 +170,12 @@ public sealed class BundleRegistry : IDisposable
                         {
                             var af = mgr.LoadAssetsFileFromBundle(bundle, i);
                             if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, mgr, slotIndex, i, isBigBundle);
+                            ScanSubFile(af, mgr, slotIndex, i);
                             any = true;
-                        }
-                        catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
-                        {
-                            _count = countBefore;
-                            SkippedFontBundles.Add(displayName);
-                            return;
                         }
                         catch { }
                     }
                 }
-            }
-            catch (InvalidOperationException fontEx) when (fontEx.Message.StartsWith("FONT_BUNDLE:"))
-            {
-                _count = countBefore;
-                SkippedFontBundles.Add(displayName);
-                return;
             }
             catch (Exception bundleEx)
             {
@@ -241,15 +184,9 @@ public sealed class BundleRegistry : IDisposable
                     var af = mgr.LoadAssetsFile(filePath);
                     if (af?.file?.AssetInfos != null)
                     {
-                        ScanSubFile(af, mgr, slotIndex, 0, isBigBundle);
+                        ScanSubFile(af, mgr, slotIndex, 0);
                         any = true;
                     }
-                }
-                catch (InvalidOperationException fontEx2) when (fontEx2.Message.StartsWith("FONT_BUNDLE:"))
-                {
-                    _count = countBefore;
-                    SkippedFontBundles.Add(displayName);
-                    return;
                 }
                 catch (Exception assetsEx)
                 {
@@ -259,21 +196,9 @@ public sealed class BundleRegistry : IDisposable
                 }
             }
 
-            // For bundles larger than 30 MB, null the manager before the GC hint
-            // so its buffers are actually reclaimable. Small bundles skip this.
-            if (isBigBundle)
-                mgr = null!;
-
-            _scansSinceLastGc++;
-            if (_scansSinceLastGc >= 50)
-            {
-                _scansSinceLastGc = 0;
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-            }
-            else
-            {
-                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
-            }
+            // mgr goes out of scope. Hint gen-0 GC to free decompressed bundle data
+            // before the next file is scanned. Prevents N dead managers piling up.
+            GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
 
             if (!any || _count == countBefore) { _count = countBefore; return; }
         }
@@ -296,7 +221,7 @@ public sealed class BundleRegistry : IDisposable
     /// For each asset, only call GetBaseField again if that type has m_Name.
     /// GC.Collect(0) every 2000 named assets frees field trees mid-loop.
     /// </summary>
-    private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile, bool bigBundle = false)
+    private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile)
     {
         var infos = af.file.AssetInfos;
 
@@ -323,9 +248,6 @@ public sealed class BundleRegistry : IDisposable
                 catch { tc = ("Unknown", false); }
                 typeCache[info.TypeId] = tc;
             }
-
-            if (FontTypeGuard.IsBlocked(tc.TypeName))
-                throw new InvalidOperationException($"FONT_BUNDLE:{tc.TypeName}");
             type    = tc.TypeName;
             hasName = tc.HasName;
 
@@ -340,15 +262,13 @@ public sealed class BundleRegistry : IDisposable
                 }
                 catch { }
 
-                if (bigBundle && ++gcCounter % 2000 == 0)
+                if (++gcCounter % 2000 == 0)
                     GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
 
             _descriptors[_count++] = new AssetDescriptor(
                 info.PathId, slotIndex, subFile, info.ByteSize, type, name);
         }
-        // Drop cached field probes so the GC can collect them after this sub-file is done.
-        typeCache.Clear();
     }
 
     public Task<AssetsFileInstance?> GetLiveFileAsync(in AssetDescriptor desc)
@@ -363,12 +283,6 @@ public sealed class BundleRegistry : IDisposable
 
     public string GetBundleName(int slot)
         => slot >= 0 && slot < _slots.Count ? _slots[slot].DisplayName : "";
-
-    public void ReleaseSlot(int slot)
-    {
-        if (slot >= 0 && slot < _slots.Count)
-            _slots[slot].Release();
-    }
 
     private void EnsureCapacity(int needed)
     {
