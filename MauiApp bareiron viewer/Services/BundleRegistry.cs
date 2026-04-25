@@ -244,101 +244,61 @@ public sealed class BundleRegistry : IDisposable
     /// <summary>
     /// Writes descriptors for one sub-file into _descriptors[].
     ///
-    /// No GetBaseField calls — type name is read from TypeTree metadata,
-    /// asset name is read by seeking directly to the raw asset bytes.
-    /// This means zero field trees are built or retained during scan,
-    /// so RAM stays flat regardless of how many bundles are processed.
+    /// RAM optimization: call GetBaseField ONCE per unique TypeId (not per asset) to learn
+    /// the type name and whether it has m_Name. A bundle has ~20-50 unique types but
+    /// potentially 500k assets — so this cuts GetBaseField calls from 500k down to ~50.
+    /// For each asset, only call GetBaseField again if that type has m_Name.
+    /// GC.Collect(0) every 2000 named assets frees field trees mid-loop.
     /// </summary>
     private void ScanSubFile(AssetsFileInstance af, AssetsManager mgr, int slotIndex, int subFile, bool bigBundle = false)
     {
-        var infos    = af.file.AssetInfos;
-        var metadata = af.file.Metadata;
+        var infos = af.file.AssetInfos;
 
-        // TypeId -> (typeName, hasName) — built from TypeTree metadata only.
-        // No GetBaseField calls here, so no field trees are built or retained.
+        // Lazily-populated cache: TypeId -> (typeName, hasName)
+        // First asset of each TypeId pays one GetBaseField; all others are free.
         var typeCache = new Dictionary<int, (string TypeName, bool HasName)>();
 
         EnsureCapacity(_count + infos.Count);
 
-        // Types known to have m_Name as their first field.
-        // This list covers the vast majority of named Unity assets.
-        var namedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "Texture2D", "Sprite", "AudioClip", "Mesh", "Material", "Shader",
-            "AnimationClip", "AnimatorController", "GameObject", "MonoBehaviour",
-            "Font", "TextAsset", "ScriptableObject", "RenderTexture", "Cubemap",
-            "Texture3D", "Texture2DArray", "ComputeShader", "VideoClip",
-        };
-
+        int gcCounter = 0;
         foreach (var info in infos)
         {
-            string typeName = "Unknown";
-            bool   hasName  = false;
+            string type    = "Unknown";
+            string name    = "";
+            bool   hasName = false;
 
             if (!typeCache.TryGetValue(info.TypeId, out var tc))
             {
-                // Read type name directly from the TypeTree — zero allocation in AssetsTools.
                 try
                 {
-                    // AssetsTools 3.x: TypeTreeType has a TypeName property.
-                    // TypeId in AssetFileInfo maps into the type tree array.
-                    var types = metadata.TypeTreeTypes;
-                    AssetsTools.NET.AssetsFileType? treeType = null;
-                    foreach (var t in types)
-                    {
-                        if (t.TypeId == info.TypeId) { treeType = t; break; }
-                    }
-
-                    if (treeType != null)
-                    {
-                        // TypeName lives on the first TypeField node.
-                        typeName = treeType.TypeTree?.Nodes?.Count > 0
-                            ? (treeType.TypeTree.Nodes[0].TypeName ?? "Unknown")
-                            : "Unknown";
-                    }
-                    else
-                    {
-                        // Fallback for types without a TypeTree (e.g. stripped assets).
-                        // Use the class database if available.
-                        typeName = mgr.ClassDatabase?.FindAssetClassByID(info.TypeId)
-                            ?.Name?.GetString(mgr.ClassDatabase) ?? "Unknown";
-                    }
+                    var probe = mgr.GetBaseField(af, info);
+                    tc = (probe.TypeName ?? "Unknown", probe["m_Name"] is { IsDummy: false });
                 }
-                catch { typeName = "Unknown"; }
-
-                hasName = namedTypes.Contains(typeName);
-                tc = (typeName, hasName);
+                catch { tc = ("Unknown", false); }
                 typeCache[info.TypeId] = tc;
             }
-            typeName = tc.TypeName;
-            hasName  = tc.HasName;
+            type    = tc.TypeName;
+            hasName = tc.HasName;
 
-            string name = "";
-            if (hasName && info.ByteSize > 8)
+            if (hasName)
             {
-                // Read m_Name directly from raw asset bytes.
-                // Unity serializes m_Name as the FIRST field for all named types:
-                //   bytes 0-3  : int32 string length (little-endian)
-                //   bytes 4..N : UTF-8 chars (no null terminator)
-                // This avoids building a field tree entirely.
                 try
                 {
-                    var reader = af.file.Reader;
-                    reader.Position = info.AbsoluteByteStart;
-                    int nameLen = reader.ReadInt32();
-                    if (nameLen > 0 && nameLen <= 512) // sanity cap
-                    {
-                        var nameBytes = reader.ReadBytes(nameLen);
-                        name = System.Text.Encoding.UTF8.GetString(nameBytes);
-                    }
+                    var bf        = mgr.GetBaseField(af, info);
+                    var nameField = bf["m_Name"];
+                    name = nameField.IsDummy ? "" : (nameField.AsString ?? "");
+                    bf   = null!; // drop ref so GC can collect
                 }
-                catch { name = ""; }
+                catch { }
+
+                if (bigBundle && ++gcCounter % 2000 == 0)
+                    GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
 
             _descriptors[_count++] = new AssetDescriptor(
-                info.PathId, slotIndex, subFile, info.ByteSize, typeName, name);
+                info.PathId, slotIndex, subFile, info.ByteSize, type, name);
         }
-
+        // Drop cached field probes so the GC can collect them after this sub-file is done.
         typeCache.Clear();
     }
 
