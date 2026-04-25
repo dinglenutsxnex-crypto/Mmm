@@ -1185,6 +1185,8 @@
             bundleFileName = $"{_registry.Count} assets";
             if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
                 error = $"0 assets loaded. Error: {_registry.ScanErrors[0]}";
+            else if (_registry.SkippedFontBundles.Count > 0)
+                error = "Font bundle skipped (crash prevention).";
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }
@@ -1276,6 +1278,8 @@
                 error = $"0 assets loaded. First error: {_registry.ScanErrors[0]}";
             else if (_registry.ScanErrors.Count > 0)
                 error = $"{_registry.ScanErrors.Count} file(s) skipped. First: {_registry.ScanErrors[0]}";
+            else if (_registry.SkippedFontBundles.Count > 0)
+                error = $"{_registry.SkippedFontBundles.Count} font bundle(s) skipped (crash prevention).";
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }

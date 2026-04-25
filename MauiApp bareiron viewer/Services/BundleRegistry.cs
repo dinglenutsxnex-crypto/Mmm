@@ -106,6 +106,26 @@ internal sealed class BundleSlot
 }
 
 /// <summary>
+/// Unity type names that indicate font data. Bundles containing any of these
+/// are skipped entirely — corrupt font assets cause unbounded memory allocation
+/// during deserialization and will OOM-crash the process on low-RAM devices.
+/// </summary>
+internal static class FontTypeGuard
+{
+    private static readonly HashSet<string> BlockedTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Font",
+        "TMP_FontAsset",
+        "TMP_SpriteAsset",
+        "TextMeshProFont",
+        "FontDef",
+        "GUISkin",
+    };
+
+    public static bool IsBlocked(string typeName) => BlockedTypes.Contains(typeName);
+}
+
+/// <summary>
 /// Central registry. Holds only compact AssetDescriptor[] at rest.
 /// Full bundle files are opened on demand when an asset is clicked.
 /// </summary>
@@ -119,6 +139,7 @@ public sealed class BundleRegistry : IDisposable
     public ReadOnlySpan<AssetDescriptor> All   => _descriptors.AsSpan(0, _count);
     public int                           Count => _count;
     public List<string> ScanErrors { get; } = new();
+    public List<string> SkippedFontBundles { get; } = new();
 
     public void Clear()
     {
@@ -128,6 +149,7 @@ public sealed class BundleRegistry : IDisposable
         _count = 0;
         _scansSinceLastGc = 0;
         ScanErrors.Clear();
+        SkippedFontBundles.Clear();
     }
 
     /// <summary>
@@ -171,6 +193,12 @@ public sealed class BundleRegistry : IDisposable
                                 ScanSubFile(af, mgr, slotIndex, i, isBigBundle);
                                 any = true;
                             }
+                            catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
+                            {
+                                _count = countBefore;
+                                SkippedFontBundles.Add(displayName);
+                                return;
+                            }
                             catch { }
                         }
                     }
@@ -190,9 +218,21 @@ public sealed class BundleRegistry : IDisposable
                             ScanSubFile(af, mgr, slotIndex, i, isBigBundle);
                             any = true;
                         }
+                        catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
+                        {
+                            _count = countBefore;
+                            SkippedFontBundles.Add(displayName);
+                            return;
+                        }
                         catch { }
                     }
                 }
+            }
+            catch (InvalidOperationException fontEx) when (fontEx.Message.StartsWith("FONT_BUNDLE:"))
+            {
+                _count = countBefore;
+                SkippedFontBundles.Add(displayName);
+                return;
             }
             catch (Exception bundleEx)
             {
@@ -204,6 +244,12 @@ public sealed class BundleRegistry : IDisposable
                         ScanSubFile(af, mgr, slotIndex, 0, isBigBundle);
                         any = true;
                     }
+                }
+                catch (InvalidOperationException fontEx2) when (fontEx2.Message.StartsWith("FONT_BUNDLE:"))
+                {
+                    _count = countBefore;
+                    SkippedFontBundles.Add(displayName);
+                    return;
                 }
                 catch (Exception assetsEx)
                 {
@@ -277,6 +323,9 @@ public sealed class BundleRegistry : IDisposable
                 catch { tc = ("Unknown", false); }
                 typeCache[info.TypeId] = tc;
             }
+
+            if (FontTypeGuard.IsBlocked(tc.TypeName))
+                throw new InvalidOperationException($"FONT_BUNDLE:{tc.TypeName}");
             type    = tc.TypeName;
             hasName = tc.HasName;
 
