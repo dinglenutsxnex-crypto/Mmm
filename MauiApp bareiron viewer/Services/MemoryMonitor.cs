@@ -187,7 +187,7 @@ public sealed class MemoryMonitor
     {
         try
         {
-            Android.App.Application?.Context?.GetSystemService(Context.ActivityService);
+            Android.App.Application.Context.GetSystemService(Context.ActivityService);
             // Note: Cannot show dialogs from a service directly
             // The UI layer should subscribe to memory warnings and handle display
             OnMemoryWarning?.Invoke(this, EventArgs.Empty);

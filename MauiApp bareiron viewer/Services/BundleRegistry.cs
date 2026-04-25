@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AssetsTools.NET;
@@ -214,10 +215,6 @@ public sealed class BundleRegistry : IDisposable
                     return;
                 }
             }
-            finally
-            {
-                mgr.Dispose();
-            }
 
             _scansSinceLastGc++;
             if (_scansSinceLastGc >= 50)
@@ -309,10 +306,13 @@ public sealed class BundleRegistry : IDisposable
                 try
                 {
                     var reader = af.file.Reader;
-                    reader.Position = info.AbsoluteByteStart + nameOffset;
+                    reader.Position = info.absoluteFilePos + nameOffset;
                     int strLen = reader.ReadInt32();
                     if (strLen > 0 && strLen < 512)
-                        name = new string(reader.ReadChars(strLen));
+                    {
+                        byte[] strBytes = reader.ReadBytes(strLen);
+                        name = Encoding.UTF8.GetString(strBytes);
+                    }
                 }
                 catch { }
             }
