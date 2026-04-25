@@ -1193,16 +1193,28 @@
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
+            bool _memLimitAndroid = false;
             await Task.Run(async () =>
             {
                 foreach (var (displayName, documentUri) in safFiles)
                 {
+                    // FIX: check available RAM before each bundle.
+                    // If RAM is critically low, try to recover via GC first.
+                    // If memory is still too low after recovery, stop loading
+                    // rather than crash the app.
+                    if (MemoryGuard.IsMemoryLow())
+                    {
+                        bool recovered = await MemoryGuard.TryRecoverAsync();
+                        if (!recovered) { _memLimitAndroid = true; break; }
+                    }
                     _registry.ScanFile(displayName, displayName, safUri: documentUri);
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
                 }
             });
+            if (_memLimitAndroid)
+                error = $"Stopped at {_loadDone}/{_loadTotal} files — RAM too low ({MemoryGuard.GetStatusString()}). {_registry.Count} assets loaded.";
 #else
             string? folderPath = null;
 #if WINDOWS
@@ -1224,16 +1236,28 @@
             _loadTotal = files.Length;
             StateHasChanged();
 
+            bool _memLimitDesktop = false;
             await Task.Run(async () =>
             {
                 foreach (var filePath in files)
                 {
+                    // FIX: check available RAM before each bundle.
+                    // If RAM is critically low, try to recover via GC first.
+                    // If memory is still too low after recovery, stop loading
+                    // rather than crash the app.
+                    if (MemoryGuard.IsMemoryLow())
+                    {
+                        bool recovered = await MemoryGuard.TryRecoverAsync();
+                        if (!recovered) { _memLimitDesktop = true; break; }
+                    }
                     _registry.ScanFile(filePath, Path.GetFileName(filePath));
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
                 }
             });
+            if (_memLimitDesktop)
+                error = $"Stopped at {_loadDone}/{_loadTotal} files — RAM too low ({MemoryGuard.GetStatusString()}). {_registry.Count} assets loaded.";
 #endif
             _filterDirty = true;
             bundleFileName = $"{_registry.Count} assets · {bundleFileName}";
@@ -1357,8 +1381,23 @@
             using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
             {
                 var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                // FIX: Track the currently open bundle slot so we can release it
+                // when we move to the next bundle. Previously ALL bundles were opened
+                // and kept alive simultaneously for the entire export, causing a RAM spike
+                // proportional to (number of bundles × average bundle size).
+                int exportActiveSlot = -1;
+
                 foreach (var desc in list)
                 {
+                    // Release the previous bundle when we switch to a new one
+                    if (exportActiveSlot >= 0 && exportActiveSlot != desc.BundleSlot)
+                    {
+                        _registry.ReleaseSlot(exportActiveSlot);
+                        GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
+                    }
+                    exportActiveSlot = desc.BundleSlot;
+
                     try
                     {
                         var af = await _registry.GetLiveFileAsync(desc);
@@ -1415,6 +1454,10 @@
                     }
                     catch { /* skip failed asset */ }
                 }
+
+                // Release the last open slot when done
+                if (exportActiveSlot >= 0)
+                    _registry.ReleaseSlot(exportActiveSlot);
             }
             zipStream.Position = 0;
             var zipName = SafeName(Path.GetFileNameWithoutExtension(bundleFileName));

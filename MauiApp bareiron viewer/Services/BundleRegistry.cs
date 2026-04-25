@@ -100,7 +100,15 @@ internal sealed class BundleSlot
     public void Release()
     {
         _lock.Wait();
-        try { OpenFiles = Array.Empty<AssetsFileInstance?>(); OpenManager = null; }
+        try
+        {
+            // FIX: unload all open files + class databases before dropping references.
+            // Without this, AssetsManager holds file handles / MemoryStream data alive
+            // until the next full GC cycle — causing RAM to spike when many bundles are open.
+            try { OpenManager?.UnloadAll(true); } catch { }
+            OpenFiles   = Array.Empty<AssetsFileInstance?>();
+            OpenManager = null;
+        }
         finally { _lock.Release(); }
     }
 }
@@ -133,16 +141,22 @@ public sealed class BundleRegistry : IDisposable
     /// <summary>
     /// Scans a file: extracts type name + asset name without full GetBaseField deserialization
     /// for unnamed asset types. Writes descriptors directly into _descriptors[] — no
-    /// intermediate list. Hints GC between files so dead scan managers are collected promptly.
+    /// intermediate list.
+    ///
+    /// FIX: the scan AssetsManager is now explicitly unloaded after scanning so that
+    /// its internal bundle data, type database, and any MemoryStreams it holds are freed
+    /// immediately — not left for a future GC cycle. With hundreds of bundles, the old
+    /// code was silently accumulating hundreds of MB of orphaned data between GC passes.
     /// </summary>
     public void ScanFile(string filePath, string displayName, string? safUri = null)
     {
         int slotIndex   = _slots.Count;
         int countBefore = _count;
 
+        // Use a dedicated manager for scanning — it will be fully unloaded after this method.
+        var mgr = new AssetsManager();
         try
         {
-            var mgr = new AssetsManager();
             bool any = false;
             try
             {
@@ -209,17 +223,6 @@ public sealed class BundleRegistry : IDisposable
                 }
             }
 
-            _scansSinceLastGc++;
-            if (_scansSinceLastGc >= 50)
-            {
-                _scansSinceLastGc = 0;
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-            }
-            else
-            {
-                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
-            }
-
             if (!any || _count == countBefore) { _count = countBefore; return; }
         }
         catch (Exception ex)
@@ -227,6 +230,26 @@ public sealed class BundleRegistry : IDisposable
             ScanErrors.Add($"{displayName}: {ex.Message}");
             _count = countBefore;
             return;
+        }
+        finally
+        {
+            // FIX: Always unload the scan manager so it releases its file handles,
+            // unpacked bundle data, MemoryStreams, and type tree caches immediately.
+            // Previously these were kept alive until an eventual GC, causing RAM to
+            // grow linearly with the number of bundles scanned.
+            try { mgr.UnloadAll(true); } catch { }
+
+            _scansSinceLastGc++;
+            if (_scansSinceLastGc >= 10)   // more frequent than before — every 10 files
+            {
+                _scansSinceLastGc = 0;
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive,
+                           blocking: true, compacting: true);
+            }
+            else
+            {
+                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
+            }
         }
 
         _slots.Add(new BundleSlot(displayName, filePath, safUri));
