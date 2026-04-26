@@ -81,12 +81,12 @@
                         const st = el.scrollTop;
                         if (st === lastScrollTop) return;
                         lastScrollTop = st;
-                        dotnetRef.invokeMethodAsync('NotifyScroll', st, el.clientHeight);
+                        dotnetRef.invokeMethodAsync('NotifyScroll', st, el.clientHeight, el.scrollHeight, performance.now());
                     });
                 }
 
                 el.addEventListener('scroll', onScroll, { passive: true });
-                dotnetRef.invokeMethodAsync('NotifyScroll', el.scrollTop, el.clientHeight);
+                dotnetRef.invokeMethodAsync('NotifyScroll', el.scrollTop, el.clientHeight, el.scrollHeight, performance.now());
 
                 window.VirtualTable._observers[containerId] = { el, onScroll, dotnetRef, suppress: () => { suppressNext = true; } };
             },

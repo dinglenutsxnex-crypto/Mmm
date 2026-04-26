@@ -375,13 +375,6 @@
             color: white;
         }
 
-
-    tr.bi-spacer td {
-        border-bottom: none !important;
-        padding: 0 !important;
-        height: inherit;
-    }
-
     .bi-empty {
         text-align: center;
         color: #555;
@@ -927,21 +920,8 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @{
-                                var _fa      = FilteredAssets;
-                                int _total   = _fa.Count;
-                                int _wStart  = Math.Max(0, Math.Min(_windowStart, Math.Max(0, _total - BUFFER)));
-                                int _wEnd    = Math.Min(_total, _wStart + BUFFER);
-                                int _topPx   = _wStart * ROW_H;
-                                int _botPx   = (_total - _wEnd) * ROW_H;
-                            }
-                            @if (_topPx > 0)
-                            {
-                                <tr class="bi-spacer" style="height:@(_topPx)px; pointer-events:none;">
-                                    <td colspan="4"></td>
-                                </tr>
-                            }
-                            @for (int _i = _wStart; _i < _wEnd; _i++)
+                            @{ var _fa = FilteredAssets; }
+                            @for (int _i = 0; _i < Math.Min(_renderCount, _fa.Count); _i++)
                             {
                                 var _a = _fa[_i];
                                 var _idx = _i;
@@ -964,12 +944,6 @@
                                     <td class="col-name">@(string.IsNullOrEmpty(_a.Name) ? "(unnamed)" : _a.Name)</td>
                                     <td class="col-size @(!showSize ? "col-hidden" : "")"
                                         style="color:#666; font-family:Consolas,monospace;">@FormatSize(_a.ByteSize)</td>
-                                </tr>
-                            }
-                            @if (_botPx > 0)
-                            {
-                                <tr class="bi-spacer" style="height:@(_botPx)px; pointer-events:none;">
-                                    <td colspan="4"></td>
                                 </tr>
                             }
                         </tbody>
@@ -1048,9 +1022,7 @@
     string _lastSearchQuery  = "";
     HashSet<string> _lastHiddenTypes = new();
     bool _filterDirty = true;
-    const int BUFFER   = 100;
-    const int ROW_H    = 28;
-    int _windowStart   = 0;
+    int _renderCount = 100;
 
     IReadOnlyList<AssetDescriptor> FilteredAssets
     {
@@ -1065,7 +1037,7 @@
     {
         if (!_filterDirty) return;
         _filterDirty = false;
-        _windowStart = 0;
+        _renderCount = 100;
         _filteredCache.Clear();
         var all = _registry.All;
         for (int i = 0; i < all.Length; i++)
@@ -1186,7 +1158,7 @@
         }
         catch (TaskCanceledException) { return; }
         SearchQuery = val;
-        _windowStart = 0;
+        _renderCount = 100;
         await Task.Run(() =>
         {
             var dummy = FilteredAssets;
@@ -1206,7 +1178,7 @@
     {
         _registry.Clear();
         selectedDesc = null; inspectorFields = null; textureResult = null; meshResult = null;
-        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null; _windowStart = 0;
+        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null; _renderCount = 100;
         _loadDone = 0; _loadTotal = 0;
     }
 
@@ -1794,33 +1766,49 @@
         }
     }
 
+    double _lastScrollTop = -1;
+    double _lastScrollTime = 0;
     System.Threading.CancellationTokenSource? _scrollCts;
 
     [JSInvokable]
-    public void NotifyScroll(double scrollTop, double clientHeight)
+    public void NotifyScroll(double scrollTop, double clientHeight, double scrollHeight, double timestamp)
     {
-        // Compute the ideal window start from scroll position.
-        // Anchor to the row that sits at the top of the viewport,
-        // then back-offset half the buffer so content surrounds the viewport.
-        int total     = FilteredAssets.Count;
-        if (total == 0) return;
+        double elapsed  = timestamp - _lastScrollTime;
+        double delta    = Math.Abs(scrollTop - _lastScrollTop);
+        double velocity = elapsed > 0 ? delta / elapsed : 0; // px/ms
 
-        int topRow    = (int)(scrollTop / ROW_H);
-        int newStart  = Math.Max(0, Math.Min(topRow - BUFFER / 4, total - BUFFER));
+        _lastScrollTop  = scrollTop;
+        _lastScrollTime = timestamp;
 
-        // Cancel previous idle timer
-        _scrollCts?.Cancel();
-        _scrollCts?.Dispose();
-        _scrollCts = new System.Threading.CancellationTokenSource();
-        var token = _scrollCts.Token;
+        bool nearBottom = scrollTop + clientHeight >= scrollHeight - 400;
+        if (!nearBottom) return;
 
-        // 150 ms idle → snap the window and re-render
-        _ = Task.Delay(150, token).ContinueWith(t =>
+        // Fast scroll via scrollbar — wait for user to slow/stop before loading
+        if (velocity > 2.5)
         {
-            if (t.IsCanceled) return;
-            _windowStart = newStart;
-            InvokeAsync(StateHasChanged);
-        }, System.Threading.Tasks.TaskScheduler.Default);
+            _scrollCts?.Cancel();
+            _scrollCts?.Dispose();
+            _scrollCts = new System.Threading.CancellationTokenSource();
+            var token = _scrollCts.Token;
+            _ = Task.Delay(180, token).ContinueWith(t =>
+            {
+                if (t.IsCanceled) return;
+                LoadMore();
+            }, System.Threading.TaskScheduler.Default);
+            return;
+        }
+
+        // Normal scroll — load immediately
+        _scrollCts?.Cancel();
+        LoadMore();
+    }
+
+    void LoadMore()
+    {
+        var total = FilteredAssets.Count;
+        if (_renderCount >= total) return;
+        _renderCount = Math.Min(_renderCount + 100, total);
+        InvokeAsync(StateHasChanged);
     }
 
     public void Dispose()
