@@ -930,30 +930,14 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @{
-                                var _fa    = FilteredAssets;
-                                int _total = _fa.Count;
-                                int _topPx = _winStart * ROW_H;
-                                int _botPx = Math.Max(0, _total - _winEnd) * ROW_H;
-                            }
-                            @if (_topPx > 0)
-                            {
-                                <tr style="height:@(_topPx)px;">
-                                    <td class="@(!showPathId ? "col-hidden" : "")"></td>
-                                    <td></td>
-                                    <td></td>
-                                    <td class="@(!showSize ? "col-hidden" : "")"></td>
-                                </tr>
-                            }
-                            @for (int _i = _winStart; _i < _winEnd; _i++)
-                            {
-                                var _a = _fa[_i];
-                                var _idx = _i;
-                                bool _sel = selectedDesc?.PathId == _a.PathId && selectedDesc?.BundleSlot == _a.BundleSlot;
+                            <Virtualize @ref="_virtualize" Items="FilteredAssets" ItemSize="@ROW_H" OverscanCount="20" SpacerElement="tr" Context="_a">
+                                @{
+                                    bool _sel = selectedDesc?.PathId == _a.PathId && selectedDesc?.BundleSlot == _a.BundleSlot;
+                                }
                                 <tr class="@(_sel ? "selected" : "")"
-                                    @onclick="@(() => SelectByIndex(_idx))"
+                                    @onclick="@(() => SelectDescriptor(_a))"
                                     @oncontextmenu:preventDefault
-                                    @oncontextmenu="@(e => ShowCtxByIndex((_idx, e)))">
+                                    @oncontextmenu="@(e => ShowCtxForAsset((_a, e)))">
                                     <td class="col-pathid @(!showPathId ? "col-hidden" : "")"
                                         style="color:#666; font-family:Consolas,monospace;">@_a.PathId</td>
                                     <td class="col-type">
@@ -969,16 +953,7 @@
                                     <td class="col-size @(!showSize ? "col-hidden" : "")"
                                         style="color:#666; font-family:Consolas,monospace;">@FormatSize(_a.ByteSize)</td>
                                 </tr>
-                            }
-                            @if (_botPx > 0)
-                            {
-                                <tr style="height:@(_botPx)px;">
-                                    <td class="@(!showPathId ? "col-hidden" : "")"></td>
-                                    <td></td>
-                                    <td></td>
-                                    <td class="@(!showSize ? "col-hidden" : "")"></td>
-                                </tr>
-                            }
+                            </Virtualize>
                         </tbody>
                     </table>
                 }
@@ -1055,12 +1030,8 @@
     string _lastSearchQuery  = "";
     HashSet<string> _lastHiddenTypes = new();
     bool _filterDirty = true;
-    const int BUF     = 100; // rows rendered either side of viewport
-    const int ROW_H   = 28;  // must match --row-height CSS
-    const int TRIGGER = 50;  // slide when within this many rows of edge
-    int _winStart = 0;
-    int _winEnd   = 0;
-    int _pendingScrollDelta = 0; // pixel correction to apply after next render
+    const int ROW_H = 28; // must match --row-height CSS and Virtualize ItemSize
+    Virtualize<AssetDescriptor>? _virtualize;
 
     IReadOnlyList<AssetDescriptor> FilteredAssets
     {
@@ -1089,13 +1060,6 @@
                     continue;
             }
             _filteredCache.Add(a);
-        }
-        // Set window AFTER building so _winEnd is based on actual new count.
-        // Never reset scroll position here — only reset if caller explicitly wants it.
-        if (_winEnd == 0 || _winEnd > _filteredCache.Count)
-        {
-            _winStart = 0;
-            _winEnd   = Math.Min(BUF * 2, _filteredCache.Count);
         }
     }
 
@@ -1176,11 +1140,12 @@
     {
         if (hiddenTypes.Contains(type)) hiddenTypes.Remove(type); else hiddenTypes.Add(type);
         _filterDirty = true;
-        StateHasChanged();
+        RebuildFilterIfDirty();
+        InvokeAsync(async () => { if (_virtualize != null) await _virtualize.RefreshDataAsync(); StateHasChanged(); });
     }
 
-    void SelectAllTypes() { hiddenTypes.Clear();                              _filterDirty = true; StateHasChanged(); }
-    void SelectNoTypes()  { hiddenTypes = new HashSet<string>(AvailableTypes); _filterDirty = true; StateHasChanged(); }
+    void SelectAllTypes() { hiddenTypes.Clear(); _filterDirty = true; RebuildFilterIfDirty(); InvokeAsync(async () => { if (_virtualize != null) await _virtualize.RefreshDataAsync(); StateHasChanged(); }); }
+    void SelectNoTypes()  { hiddenTypes = new HashSet<string>(AvailableTypes); _filterDirty = true; RebuildFilterIfDirty(); InvokeAsync(async () => { if (_virtualize != null) await _virtualize.RefreshDataAsync(); StateHasChanged(); }); }
 
     string SearchQuery
     {
@@ -1202,11 +1167,8 @@
         }
         catch (TaskCanceledException) { return; }
         SearchQuery = val;
-        // Reset window so RebuildFilterIfDirty sets it fresh after the rebuild.
-        _winStart = 0;
-        _winEnd   = 0;
-        // Rebuild on background thread, then re-render.
         await Task.Run(() => RebuildFilterIfDirty());
+        if (_virtualize != null) await _virtualize.RefreshDataAsync();
         StateHasChanged();
     }
 
@@ -1222,7 +1184,7 @@
     {
         _registry.Clear();
         selectedDesc = null; inspectorFields = null; textureResult = null; meshResult = null;
-        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null; _winStart = 0; _winEnd = 0;
+        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null;
         _loadDone = 0; _loadTotal = 0;
     }
 
@@ -1409,6 +1371,14 @@
     {
         if (args.Index < 0 || args.Index >= FilteredAssets.Count) return;
         _ctxDesc = FilteredAssets[args.Index];
+        _ctxX = args.E.ClientX; _ctxY = args.E.ClientY;
+        _ctxVisible = true;
+        StateHasChanged();
+    }
+
+    void ShowCtxForAsset((AssetDescriptor Asset, MouseEventArgs E) args)
+    {
+        _ctxDesc = args.Asset;
         _ctxX = args.E.ClientX; _ctxY = args.E.ClientY;
         _ctxVisible = true;
         StateHasChanged();
@@ -1798,67 +1768,18 @@
         return crc ^ 0xFFFFFFFF;
     }
 
-    DotNetObjectReference<Home>? _selfRef;
-
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            _selfRef = DotNetObjectReference.Create(this);
-            await JS.InvokeVoidAsync("VirtualTable.attach", _selfRef, "bi-table-wrap");
             await JS.InvokeVoidAsync("PanelResize.init");
-        }
-        else if (_pendingScrollDelta != 0)
-        {
-            int delta = _pendingScrollDelta;
-            _pendingScrollDelta = 0;
-            // scrollBy is relative — it does NOT fire a new scroll event that would
-            // re-trigger NotifyScroll. This keeps the viewport exactly where the user
-            // left it after the virtual window slides in either direction.
-            await JS.InvokeVoidAsync("VirtualTable.scrollBy", "bi-table-wrap", delta);
         }
     }
 
     System.Threading.CancellationTokenSource? _scrollCts;
 
-    [JSInvokable]
-    public void NotifyScroll(double scrollTop, double clientHeight, double scrollHeight, double timestamp)
-    {
-        // Use _filteredCache directly — never call FilteredAssets (property) here.
-        int total = _filteredCache.Count;
-        if (total == 0) return;
-
-        int topRow = (int)(scrollTop / ROW_H);
-        int botRow = (int)((scrollTop + clientHeight) / ROW_H);
-
-        // Slide down: viewport bottom is within TRIGGER rows of window end
-        if (botRow + TRIGGER >= _winEnd && _winEnd < total)
-        {
-            int oldStart = _winStart;
-            _winEnd   = Math.Min(total, _winEnd + TRIGGER);
-            _winStart = Math.Max(0, _winEnd - BUF * 2);
-            // Top spacer grew by (winStart - oldStart) * ROW_H pixels.
-            // Browser auto-scrolled us DOWN by that amount — cancel it by scrolling UP (negative).
-            _pendingScrollDelta += (oldStart - _winStart) * ROW_H;
-            InvokeAsync(StateHasChanged);
-            return;
-        }
-
-        // Slide up: viewport top is within TRIGGER rows of window start
-        if (topRow - TRIGGER <= _winStart && _winStart > 0)
-        {
-            int oldStart = _winStart;
-            _winStart = Math.Max(0, _winStart - TRIGGER);
-            _winEnd   = Math.Min(total, _winStart + BUF * 2);
-            // Top spacer shrank — browser scrolled us UP — cancel it by scrolling DOWN (positive).
-            _pendingScrollDelta += (oldStart - _winStart) * ROW_H;
-            InvokeAsync(StateHasChanged);
-        }
-    }
-
     public void Dispose()
     {
-        _selfRef?.Dispose();
         _registry.Dispose();
         _scrollCts?.Cancel();
         _scrollCts?.Dispose();
