@@ -39,19 +39,17 @@ public readonly struct AssetDescriptor
 /// </summary>
 internal sealed class BundleSlot
 {
-    public readonly string  DisplayName;
-    public          string  FilePath;
-    public readonly string? SafUri;
+    public readonly string DisplayName;
+    public          string FilePath;
 
     public AssetsFileInstance?[] OpenFiles   = Array.Empty<AssetsFileInstance?>();
     public AssetsManager?        OpenManager;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public BundleSlot(string displayName, string filePath, string? safUri = null)
+    public BundleSlot(string displayName, string filePath)
     {
         DisplayName = displayName;
         FilePath    = filePath;
-        SafUri      = safUri;
     }
 
     public async Task<AssetsFileInstance?> GetOrOpenSubFileAsync(int subFileIndex)
@@ -61,23 +59,6 @@ internal sealed class BundleSlot
         {
             if (OpenManager == null)
             {
-#if ANDROID
-                if (SafUri != null)
-                {
-                    OpenManager = new AssetsManager();
-                    using var stream = AndroidDownloadService.OpenSafStream(SafUri);
-                    var bundle = OpenManager.LoadBundleFile(stream, FilePath);
-                    int count  = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
-                    OpenFiles  = new AssetsFileInstance?[count];
-                    for (int i = 0; i < count; i++)
-                    {
-                        try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundle, i); }
-                        catch { }
-                    }
-                    return subFileIndex >= 0 && subFileIndex < OpenFiles.Length
-                        ? OpenFiles[subFileIndex] : null;
-                }
-#endif
                 OpenManager = new AssetsManager();
                 var bundleFile = OpenManager.LoadBundleFile(FilePath);
                 int fileCount  = bundleFile.file.BlockAndDirInfo.DirectoryInfos.Count;
@@ -142,7 +123,7 @@ public sealed class BundleRegistry : IDisposable
     /// for unnamed asset types. Writes descriptors directly into _descriptors[] — no
     /// intermediate list. Hints GC between files so dead scan managers are collected promptly.
     /// </summary>
-    public void ScanFile(string filePath, string displayName, string? safUri = null)
+    public void ScanFile(string filePath, string displayName)
     {
         int slotIndex   = _slots.Count;
         int countBefore = _count;
@@ -153,52 +134,24 @@ public sealed class BundleRegistry : IDisposable
             bool any = false;
             try
             {
-#if ANDROID
-                if (safUri != null)
+                var bundle = mgr.LoadBundleFile(filePath);
+                var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                for (int i = 0; i < dirs.Count; i++)
                 {
-                    using var stream = AndroidDownloadService.OpenSafStream(safUri);
-                    var bundle = mgr.LoadBundleFile(stream, filePath);
-                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                    for (int i = 0; i < dirs.Count; i++)
+                    try
                     {
-                        try
-                        {
-                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                            if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, mgr, slotIndex, i);
-                            any = true;
-                        }
-                        catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
-                        {
-                            _count = countBefore;
-                            SkippedFontBundles.Add(displayName);
-                            return;
-                        }
-                        catch { }
+                        var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                        if (af?.file?.AssetInfos == null) continue;
+                        ScanSubFile(af, mgr, slotIndex, i);
+                        any = true;
                     }
-                }
-                else
-#endif
-                {
-                    var bundle = mgr.LoadBundleFile(filePath);
-                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                    for (int i = 0; i < dirs.Count; i++)
+                    catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
                     {
-                        try
-                        {
-                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                            if (af?.file?.AssetInfos == null) continue;
-                            ScanSubFile(af, mgr, slotIndex, i);
-                            any = true;
-                        }
-                        catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
-                        {
-                            _count = countBefore;
-                            SkippedFontBundles.Add(displayName);
-                            return;
-                        }
-                        catch { }
+                        _count = countBefore;
+                        SkippedFontBundles.Add(displayName);
+                        return;
                     }
+                    catch { }
                 }
             }
             catch (InvalidOperationException fontEx) when (fontEx.Message.StartsWith("FONT_BUNDLE:"))
@@ -245,7 +198,7 @@ public sealed class BundleRegistry : IDisposable
             return;
         }
 
-        _slots.Add(new BundleSlot(displayName, filePath, safUri));
+        _slots.Add(new BundleSlot(displayName, filePath));
     }
 
     /// <summary>

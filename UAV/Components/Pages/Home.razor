@@ -1235,7 +1235,7 @@
             {
                 foreach (var (displayName, tmpPath) in safFiles)
                 {
-                    _registry.ScanFile(tmpPath, displayName, safUri: null);
+                    _registry.ScanFile(tmpPath, displayName);
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
