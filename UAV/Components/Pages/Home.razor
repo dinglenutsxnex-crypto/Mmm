@@ -1317,8 +1317,8 @@
     // ── Asset selection (lazy: opens bundle file on first click) ─────────────
     async Task SelectByIndex(int filteredIndex)
     {
-        if (filteredIndex < 0 || filteredIndex >= FilteredAssets.Count) return;
-        var desc = FilteredAssets[filteredIndex];
+        if (filteredIndex < 0 || filteredIndex >= _filteredCache.Count) return;
+        var desc = _filteredCache[filteredIndex];
         await SelectDescriptor(desc);
     }
 
@@ -1369,8 +1369,8 @@
     // ── Context menu ────────────────────────────────────────────────────────
     void ShowCtxByIndex((int Index, MouseEventArgs E) args)
     {
-        if (args.Index < 0 || args.Index >= FilteredAssets.Count) return;
-        _ctxDesc = FilteredAssets[args.Index];
+        if (args.Index < 0 || args.Index >= _filteredCache.Count) return;
+        _ctxDesc = _filteredCache[args.Index];
         _ctxX = args.E.ClientX; _ctxY = args.E.ClientY;
         _ctxVisible = true;
         StateHasChanged();
