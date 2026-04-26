@@ -375,6 +375,16 @@
             color: white;
         }
 
+
+    .bi-table tbody tr:has(> td:empty:first-child) {
+        pointer-events: none;
+        border: none;
+    }
+    .bi-table tbody tr:has(> td:empty:first-child) td {
+        border: none !important;
+        padding: 0 !important;
+    }
+
     .bi-empty {
         text-align: center;
         color: #555;
@@ -920,8 +930,23 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @{ var _fa = FilteredAssets; }
-                            @for (int _i = 0; _i < Math.Min(_renderCount, _fa.Count); _i++)
+                            @{
+                                var _fa     = FilteredAssets;
+                                int _total  = _fa.Count;
+                                int _wEnd   = Math.Min(_total, _winStart + WIN);
+                                int _topPx  = _winStart * ROW_H;
+                                int _botPx  = Math.Max(0, _total - _winStart - WIN) * ROW_H;
+                            }
+                            @if (_topPx > 0)
+                            {
+                                <tr style="height:@(_topPx)px;">
+                                    <td class="@(!showPathId ? "col-hidden" : "")"></td>
+                                    <td></td>
+                                    <td></td>
+                                    <td class="@(!showSize ? "col-hidden" : "")"></td>
+                                </tr>
+                            }
+                            @for (int _i = _winStart; _i < _wEnd; _i++)
                             {
                                 var _a = _fa[_i];
                                 var _idx = _i;
@@ -944,6 +969,15 @@
                                     <td class="col-name">@(string.IsNullOrEmpty(_a.Name) ? "(unnamed)" : _a.Name)</td>
                                     <td class="col-size @(!showSize ? "col-hidden" : "")"
                                         style="color:#666; font-family:Consolas,monospace;">@FormatSize(_a.ByteSize)</td>
+                                </tr>
+                            }
+                            @if (_botPx > 0)
+                            {
+                                <tr style="height:@(_botPx)px;">
+                                    <td class="@(!showPathId ? "col-hidden" : "")"></td>
+                                    <td></td>
+                                    <td></td>
+                                    <td class="@(!showSize ? "col-hidden" : "")"></td>
                                 </tr>
                             }
                         </tbody>
@@ -1022,7 +1056,9 @@
     string _lastSearchQuery  = "";
     HashSet<string> _lastHiddenTypes = new();
     bool _filterDirty = true;
-    int _renderCount = 100;
+    const int WIN  = 100;   // rows in DOM at any time
+    const int ROW_H = 28;   // must match --row-height CSS
+    int _winStart = 0;      // first rendered row index
 
     IReadOnlyList<AssetDescriptor> FilteredAssets
     {
@@ -1037,7 +1073,7 @@
     {
         if (!_filterDirty) return;
         _filterDirty = false;
-        _renderCount = 100;
+        _winStart = 0;
         _filteredCache.Clear();
         var all = _registry.All;
         for (int i = 0; i < all.Length; i++)
@@ -1158,7 +1194,7 @@
         }
         catch (TaskCanceledException) { return; }
         SearchQuery = val;
-        _renderCount = 100;
+        _winStart = 0;
         await Task.Run(() =>
         {
             var dummy = FilteredAssets;
@@ -1178,7 +1214,7 @@
     {
         _registry.Clear();
         selectedDesc = null; inspectorFields = null; textureResult = null; meshResult = null;
-        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null; _renderCount = 100;
+        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null; _winStart = 0;
         _loadDone = 0; _loadTotal = 0;
     }
 
@@ -1766,7 +1802,7 @@
         }
     }
 
-    double _lastScrollTop = -1;
+    double _lastScrollTop  = -1;
     double _lastScrollTime = 0;
     System.Threading.CancellationTokenSource? _scrollCts;
 
@@ -1780,34 +1816,33 @@
         _lastScrollTop  = scrollTop;
         _lastScrollTime = timestamp;
 
-        bool nearBottom = scrollTop + clientHeight >= scrollHeight - 400;
-        if (!nearBottom) return;
+        // Ideal window start: centre the buffer around the viewport
+        int total      = FilteredAssets.Count;
+        int topRow     = (int)(scrollTop / ROW_H);
+        int idealStart = Math.Max(0, Math.Min(topRow - WIN / 4, total - WIN));
 
-        // Fast scroll via scrollbar — wait for user to slow/stop before loading
+        if (idealStart == _winStart) return;
+
+        // Fast fling — debounce, don't thrash the DOM
         if (velocity > 2.5)
         {
             _scrollCts?.Cancel();
             _scrollCts?.Dispose();
             _scrollCts = new System.Threading.CancellationTokenSource();
-            var token = _scrollCts.Token;
-            _ = Task.Delay(180, token).ContinueWith(t =>
+            var token   = _scrollCts.Token;
+            var target  = idealStart;
+            _ = Task.Delay(150, token).ContinueWith(t =>
             {
                 if (t.IsCanceled) return;
-                LoadMore();
+                _winStart = target;
+                InvokeAsync(StateHasChanged);
             }, System.Threading.Tasks.TaskScheduler.Default);
             return;
         }
 
-        // Normal scroll — load immediately
+        // Normal scroll — update immediately
         _scrollCts?.Cancel();
-        LoadMore();
-    }
-
-    void LoadMore()
-    {
-        var total = FilteredAssets.Count;
-        if (_renderCount >= total) return;
-        _renderCount = Math.Min(_renderCount + 100, total);
+        _winStart = idealStart;
         InvokeAsync(StateHasChanged);
     }
 
