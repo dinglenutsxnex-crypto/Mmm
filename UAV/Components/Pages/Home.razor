@@ -1074,8 +1074,6 @@
     {
         if (!_filterDirty) return;
         _filterDirty = false;
-        _winStart = 0;
-        _winEnd   = Math.Min(BUF, _filteredCache.Count);
         _filteredCache.Clear();
         var all = _registry.All;
         for (int i = 0; i < all.Length; i++)
@@ -1090,6 +1088,13 @@
                     continue;
             }
             _filteredCache.Add(a);
+        }
+        // Set window AFTER building so _winEnd is based on actual new count.
+        // Never reset scroll position here — only reset if caller explicitly wants it.
+        if (_winEnd == 0 || _winEnd > _filteredCache.Count)
+        {
+            _winStart = 0;
+            _winEnd   = Math.Min(BUF * 2, _filteredCache.Count);
         }
     }
 
@@ -1196,12 +1201,11 @@
         }
         catch (TaskCanceledException) { return; }
         SearchQuery = val;
+        // Reset window so RebuildFilterIfDirty sets it fresh after the rebuild.
         _winStart = 0;
         _winEnd   = 0;
-        await Task.Run(() =>
-        {
-            var dummy = FilteredAssets;
-        });
+        // Rebuild on background thread, then re-render.
+        await Task.Run(() => RebuildFilterIfDirty());
         StateHasChanged();
     }
 
@@ -1810,20 +1814,21 @@
     [JSInvokable]
     public void NotifyScroll(double scrollTop, double clientHeight, double scrollHeight, double timestamp)
     {
-        var fa    = FilteredAssets;
-        int total = fa.Count;
+        // Use _filteredCache directly — never call FilteredAssets here.
+        // FilteredAssets is a property that can trigger RebuildFilterIfDirty(), which
+        // resets _winEnd to 0. That would immediately re-trigger the slide-down condition
+        // on the very next scroll event, creating an infinite re-render loop.
+        int total = _filteredCache.Count;
         if (total == 0) return;
 
-        // Which row is at the top of the viewport right now
         int topRow = (int)(scrollTop / ROW_H);
         int botRow = (int)((scrollTop + clientHeight) / ROW_H);
 
         // Slide down: viewport bottom is within TRIGGER rows of window end
         if (botRow + TRIGGER >= _winEnd && _winEnd < total)
         {
-            int shift  = TRIGGER;
-            _winEnd    = Math.Min(total, _winEnd + shift);
-            _winStart  = Math.Max(0, _winEnd - BUF * 2);
+            _winEnd   = Math.Min(total, _winEnd + TRIGGER);
+            _winStart = Math.Max(0, _winEnd - BUF * 2);
             InvokeAsync(StateHasChanged);
             return;
         }
@@ -1831,9 +1836,8 @@
         // Slide up: viewport top is within TRIGGER rows of window start
         if (topRow - TRIGGER <= _winStart && _winStart > 0)
         {
-            int shift  = TRIGGER;
-            _winStart  = Math.Max(0, _winStart - shift);
-            _winEnd    = Math.Min(total, _winStart + BUF * 2);
+            _winStart = Math.Max(0, _winStart - TRIGGER);
+            _winEnd   = Math.Min(total, _winStart + BUF * 2);
             InvokeAsync(StateHasChanged);
         }
     }
