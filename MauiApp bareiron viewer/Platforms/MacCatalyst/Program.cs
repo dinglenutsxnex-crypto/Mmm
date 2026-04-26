@@ -1,7 +1,7 @@
 ﻿using ObjCRuntime;
 using UIKit;
 
-namespace MauiApp_bareiron_viewer
+namespace UAV
 {
     public class Program
     {

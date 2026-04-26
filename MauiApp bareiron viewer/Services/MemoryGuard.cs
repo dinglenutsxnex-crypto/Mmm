@@ -1,7 +1,7 @@
 using System;
 using System.Runtime;
 
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 /// <summary>
 /// Lightweight RAM pressure guard.

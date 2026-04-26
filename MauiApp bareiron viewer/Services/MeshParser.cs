@@ -5,7 +5,7 @@ using System.Buffers;
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
 
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 public class MeshParseResult
 {

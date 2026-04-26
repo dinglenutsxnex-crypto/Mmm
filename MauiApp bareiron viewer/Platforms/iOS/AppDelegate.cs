@@ -1,6 +1,6 @@
 ﻿using Foundation;
 
-namespace MauiApp_bareiron_viewer
+namespace UAV
 {
     [Register("AppDelegate")]
     public class AppDelegate : MauiUIApplicationDelegate

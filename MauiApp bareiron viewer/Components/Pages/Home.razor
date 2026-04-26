@@ -2,7 +2,7 @@
 @layout EmptyLayout
 @using AssetsTools.NET
 @using AssetsTools.NET.Extra
-@using MauiApp_bareiron_viewer.Services
+@using UAV.Services
 @using System.IO
 @using System.IO.Compression
 @using System.Text.Json
@@ -786,7 +786,7 @@
     <div class="bi-nav">
         <div class="bi-nav-title">
             <i class="fa-brands fa-unity" style="color:#fff; font-size:16px; -webkit-text-fill-color:#fff;"></i>
-            <span class="gradient-text">S-UAV</span>
+            <span class="gradient-text">UAV</span>
         </div>
 
         <div class="bi-nav-controls" @onclick:stopPropagation>
@@ -1554,7 +1554,7 @@
 
             try
             {
-                var decoded = BareIronTextureDecoder.Decode(imageData, width, height, af);
+                var decoded = UAVTextureDecoder.Decode(imageData, width, height, af);
                 return new TextureDecodeResult { RgbaData = decoded, Width = width, Height = height, FormatId = af, FormatName = GetFormatName(format), SwapRB = false };
             }
             catch (Exception decEx)

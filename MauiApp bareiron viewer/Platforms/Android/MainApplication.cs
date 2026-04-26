@@ -1,7 +1,7 @@
 ﻿using Android.App;
 using Android.Runtime;
 
-namespace MauiApp_bareiron_viewer
+namespace UAV
 {
     [Application]
     public class MainApplication : MauiApplication

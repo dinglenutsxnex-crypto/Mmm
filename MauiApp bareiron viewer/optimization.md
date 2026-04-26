@@ -23,7 +23,7 @@
 | BundleRegistry.cs | `Services/BundleRegistry.cs` |
 | AndroidDownloadService.cs | `Services/AndroidDownloadService.cs` |
 | MainActivity.cs | `Platforms/Android/MainActivity.cs` |
-| Project file | `MauiApp bareiron viewer.csproj` |
+| Project file | `UAV.csproj` |
 
 ---
 
@@ -265,7 +265,7 @@ This is optional but provides broader storage access. Even with this permission,
 ```csharp
 using Microsoft.Extensions.Logging;
 
-namespace MauiApp_bareiron_viewer
+namespace UAV
 {
     public static class MauiProgram
     {
@@ -296,7 +296,7 @@ namespace MauiApp_bareiron_viewer
 ```csharp
 using Microsoft.Extensions.Logging;
 
-namespace MauiApp_bareiron_viewer
+namespace UAV
 {
     public static class MauiProgram
     {

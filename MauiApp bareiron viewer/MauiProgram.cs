@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 
-namespace MauiApp_bareiron_viewer
+namespace UAV
 {
     public static class MauiProgram
     {

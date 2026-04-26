@@ -1,6 +1,6 @@
 using Microsoft.JSInterop;
 
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 public static class MobileDownloader
 {

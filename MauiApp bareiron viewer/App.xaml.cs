@@ -1,4 +1,4 @@
-﻿namespace MauiApp_bareiron_viewer
+﻿namespace UAV
 {
     public partial class App : Application
     {
@@ -9,7 +9,7 @@
 
         protected override Window CreateWindow(IActivationState? activationState)
         {
-            return new Window(new MainPage()) { Title = "MauiApp bareiron viewer" };
+            return new Window(new MainPage()) { Title = "UAV" };
         }
     }
 }

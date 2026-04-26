@@ -2,7 +2,7 @@ using Microsoft.JSInterop;
 using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Storage;
 
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 public class DownloadService
 {

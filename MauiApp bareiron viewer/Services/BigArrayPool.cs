@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace MauiApp_bareiron_viewer.Services
+namespace UAV.Services
 {
     public static class BigArrayPool<T>
     {

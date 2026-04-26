@@ -1,4 +1,4 @@
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 /// <summary>
 /// Launches Android's ACTION_OPEN_DOCUMENT_TREE and returns the selected

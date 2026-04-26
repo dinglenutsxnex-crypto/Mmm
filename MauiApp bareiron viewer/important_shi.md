@@ -1,4 +1,4 @@
-# Important Things for Bareiron Viewer
+# Important Things for UAV
 
 ## Texture2D Fields (from AssetsTools.NET)
 
@@ -54,7 +54,7 @@ public enum TextureFormat
 ## Decoder Service API
 
 ```csharp
-using MauiApp_bareiron_viewer.Services;
+using UAV.Services;
 
 TextureDecodeResult result = TextureDecoderService.Decode(
     byte[] imageData,   // raw compressed texture data

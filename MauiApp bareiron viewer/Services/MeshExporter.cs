@@ -1,13 +1,13 @@
 using System.Text;
 
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 public static class MeshExporter
 {
     public static string ExportToObj(MeshParseResult meshData, string assetName)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"# Exported from bareiron viewer");
+        sb.AppendLine($"# Exported from UAV");
         sb.AppendLine($"# Asset: {assetName}");
         sb.AppendLine($"# Vertices: {meshData.VertexCount}");
         sb.AppendLine($"# Triangles: {meshData.TriangleCount}");

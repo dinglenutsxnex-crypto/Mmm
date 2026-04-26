@@ -1,4 +1,4 @@
-﻿namespace MauiApp_bareiron_viewer
+﻿namespace UAV
 {
     public partial class MainPage : ContentPage
     {

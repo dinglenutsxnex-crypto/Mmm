@@ -5,7 +5,7 @@ using AssetRipper.TextureDecoder.Bc;
 using AssetRipper.TextureDecoder.Dxt;
 using AssetRipper.TextureDecoder.Etc;
 
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 public class TextureDecodeResult
 {
@@ -19,7 +19,7 @@ public class TextureDecodeResult
     public bool Success => RgbaData != null && Error == null;
 }
 
-public static class BareIronTextureDecoder
+public static class UAVTextureDecoder
 {
     public static byte[] Decode(byte[] data, int width, int height, int format, bool swapRB = false)
     {

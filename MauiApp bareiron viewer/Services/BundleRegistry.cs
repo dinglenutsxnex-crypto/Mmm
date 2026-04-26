@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
 
-namespace MauiApp_bareiron_viewer.Services;
+namespace UAV.Services;
 
 /// <summary>
 /// Compact asset descriptor — only what the table needs. Stored as a flat array.
