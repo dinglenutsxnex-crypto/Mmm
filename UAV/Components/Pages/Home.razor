@@ -930,7 +930,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <Virtualize @ref="_virtualize" Items="FilteredAssets" ItemSize="@ROW_H" OverscanCount="20" SpacerElement="tr" Context="_a">
+                            <Virtualize TItem="AssetDescriptor" @ref="_virtualize" Items="FilteredAssets" ItemSize="@ROW_H" OverscanCount="20" SpacerElement="tr" Context="_a">
                                 @{
                                     bool _sel = selectedDesc?.PathId == _a.PathId && selectedDesc?.BundleSlot == _a.BundleSlot;
                                 }
