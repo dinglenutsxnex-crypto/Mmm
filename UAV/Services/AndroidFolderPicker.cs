@@ -37,6 +37,11 @@ public static class AndroidFolderPicker
 
         if (resultCode == Android.App.Result.Ok && data?.Data != null)
         {
+            var activity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
+            activity?.ContentResolver?.TakePersistableUriPermission(
+                data.Data,
+                Android.Content.ActivityFlags.GrantReadUriPermission);
+
             var uri = data.Data.ToString();
             _tcs?.TrySetResult(uri);
         }

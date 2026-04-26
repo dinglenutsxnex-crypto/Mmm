@@ -8,46 +8,26 @@ namespace UAV.Services;
 public static class AndroidDownloadService
 {
 #if ANDROID
-    static int _tmpCounter = 0;
-
     public static async Task SaveFileAsync(string filename, byte[] bytes, string mimeType)
     {
         try
         {
-            if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.Q)
-            {
-                // Android 10+ (API 29+): MediaStore — no storage permission required
-                var cv = new Android.Content.ContentValues();
-                cv.Put(Android.Provider.MediaStore.IMediaColumns.DisplayName, filename);
-                cv.Put(Android.Provider.MediaStore.IMediaColumns.MimeType, mimeType);
-                cv.Put(Android.Provider.MediaStore.IMediaColumns.RelativePath,
-                    Android.OS.Environment.DirectoryDownloads);
+            var cv = new Android.Content.ContentValues();
+            cv.Put(Android.Provider.MediaStore.IMediaColumns.DisplayName, filename);
+            cv.Put(Android.Provider.MediaStore.IMediaColumns.MimeType, mimeType);
+            cv.Put(Android.Provider.MediaStore.IMediaColumns.RelativePath,
+                Android.OS.Environment.DirectoryDownloads);
 
-                var resolver = Android.App.Application.Context.ContentResolver!;
-                var uri = resolver.Insert(
-                    Android.Provider.MediaStore.Downloads.ExternalContentUri!, cv)
-                    ?? throw new Exception("MediaStore insert returned null URI");
+            var resolver = Android.App.Application.Context.ContentResolver!;
+            var uri = resolver.Insert(
+                Android.Provider.MediaStore.Downloads.ExternalContentUri!, cv)
+                ?? throw new Exception("MediaStore insert returned null URI");
 
-                await using var stream = resolver.OpenOutputStream(uri)
-                    ?? throw new Exception("Could not open output stream");
+            await using var stream = resolver.OpenOutputStream(uri)
+                ?? throw new Exception("Could not open output stream");
 
-                await stream.WriteAsync(bytes, 0, bytes.Length);
-            }
-            else
-            {
-                // Android 9 and below: direct write
-                var status = await Permissions.RequestAsync<Permissions.StorageWrite>();
-                if (status != PermissionStatus.Granted)
-                    throw new Exception("Storage permission denied");
+            await stream.WriteAsync(bytes, 0, bytes.Length);
 
-                var dir = Android.OS.Environment
-                    .GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryDownloads)!
-                    .AbsolutePath;
-
-                await File.WriteAllBytesAsync(Path.Combine(dir, filename), bytes);
-            }
-
-            // ✅ Notify the user — previously silent, which caused repeat downloads
             ShowToast($"Saved to Downloads: {filename}");
         }
         catch (Exception ex)
@@ -77,12 +57,11 @@ public static class AndroidDownloadService
 
     /// <summary>
     /// Enumerates all files inside a SAF tree URI obtained from FolderPicker.
-    /// Because Android SAF paths aren't real filesystem paths, Directory.GetFiles()
-    /// will throw on them. This method uses the ContentResolver instead, copies each
-    /// file to the app's cache dir, and returns (displayName, tempPath) pairs.
-    /// Caller is responsible for calling CleanupTempFiles() when done loading.
+    /// Returns (displayName, documentUriString) pairs — no temp copying.
+    /// The document URI can be opened via ContentResolver.OpenInputStream at any time
+    /// as long as the persisted permission is held.
     /// </summary>
-    public static List<(string DisplayName, string TempPath)> GetFilesFromSafUri(string safUriString)
+    public static List<(string DisplayName, string DocumentUri)> GetFilesFromSafUri(string safUriString)
     {
         var results = new List<(string, string)>();
 
@@ -111,15 +90,12 @@ public static class AndroidDownloadService
         int nameCol = cursor.GetColumnIndex(Android.Provider.DocumentsContract.Document.ColumnDisplayName);
         int mimeCol = cursor.GetColumnIndex(Android.Provider.DocumentsContract.Document.ColumnMimeType);
 
-        var cacheDir = Android.App.Application.Context.CacheDir!.AbsolutePath;
-
         while (cursor.MoveToNext())
         {
             var docId       = cursor.GetString(idCol)   ?? "";
             var displayName = cursor.GetString(nameCol) ?? docId;
             var mime        = cursor.GetString(mimeCol) ?? "";
 
-            // Skip subdirectories
             if (mime == Android.Provider.DocumentsContract.Document.MimeTypeDir)
                 continue;
 
@@ -127,41 +103,22 @@ public static class AndroidDownloadService
                 .BuildDocumentUriUsingTree(treeUri, docId);
             if (fileUri == null) continue;
 
-            try
-            {
-                // Copy to a real temp path so AssetsManager can open it by path
-                var idx     = System.Threading.Interlocked.Increment(ref _tmpCounter);
-                var tmpName = $"saf_{idx}_{System.IO.Path.GetFileName(displayName)}";
-                var tmpPath = System.IO.Path.Combine(cacheDir, tmpName);
-
-                using var inStream  = resolver.OpenInputStream(fileUri)
-                    ?? throw new Exception("Cannot open input stream");
-                using var outStream = File.Create(tmpPath);
-                inStream.CopyTo(outStream);
-
-                results.Add((displayName, tmpPath));
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[AndroidDownloadService] Skip '{displayName}': {ex.Message}");
-            }
+            results.Add((displayName, fileUri.ToString()!));
         }
 
         return results;
     }
 
     /// <summary>
-    /// Deletes temp files written by GetFilesFromSafUri.
-    /// Call this in a finally block after loading completes.
+    /// Opens an input stream for a SAF document URI string.
     /// </summary>
-    public static void CleanupTempFiles(IEnumerable<string> tempPaths)
+    public static System.IO.Stream OpenSafStream(string documentUriString)
     {
-        foreach (var path in tempPaths)
-        {
-            try { if (File.Exists(path)) File.Delete(path); }
-            catch { /* best effort */ }
-        }
+        var uri      = Android.Net.Uri.Parse(documentUriString)
+            ?? throw new Exception($"Invalid document URI: {documentUriString}");
+        var resolver = Android.App.Application.Context.ContentResolver!;
+        return resolver.OpenInputStream(uri)
+            ?? throw new Exception($"Cannot open input stream for: {documentUriString}");
     }
 #endif
 }

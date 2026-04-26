@@ -39,17 +39,19 @@ public readonly struct AssetDescriptor
 /// </summary>
 internal sealed class BundleSlot
 {
-    public readonly string DisplayName;
-    public          string FilePath;
+    public readonly string  DisplayName;
+    public          string  FilePath;
+    public readonly string? SafUri;
 
     public AssetsFileInstance?[] OpenFiles   = Array.Empty<AssetsFileInstance?>();
     public AssetsManager?        OpenManager;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public BundleSlot(string displayName, string filePath)
+    public BundleSlot(string displayName, string filePath, string? safUri = null)
     {
         DisplayName = displayName;
         FilePath    = filePath;
+        SafUri      = safUri;
     }
 
     public async Task<AssetsFileInstance?> GetOrOpenSubFileAsync(int subFileIndex)
@@ -59,6 +61,26 @@ internal sealed class BundleSlot
         {
             if (OpenManager == null)
             {
+#if ANDROID
+                if (SafUri != null)
+                {
+                    OpenManager = new AssetsManager();
+                    using var stream = AndroidDownloadService.OpenSafStream(SafUri);
+                    var ms = new MemoryStream();
+                    stream.CopyTo(ms);
+                    ms.Position = 0;
+                    var bundle = OpenManager.LoadBundleFile(ms, FilePath, unpackIfPacked: true);
+                    int count  = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
+                    OpenFiles  = new AssetsFileInstance?[count];
+                    for (int i = 0; i < count; i++)
+                    {
+                        try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundle, i); }
+                        catch { }
+                    }
+                    return subFileIndex >= 0 && subFileIndex < OpenFiles.Length
+                        ? OpenFiles[subFileIndex] : null;
+                }
+#endif
                 OpenManager = new AssetsManager();
                 var bundleFile = OpenManager.LoadBundleFile(FilePath);
                 int fileCount  = bundleFile.file.BlockAndDirInfo.DirectoryInfos.Count;
@@ -78,10 +100,19 @@ internal sealed class BundleSlot
     public void Release()
     {
         _lock.Wait();
-        try { OpenFiles = Array.Empty<AssetsFileInstance?>(); OpenManager = null; }
+        try
+        {
+            // FIX: unload all open files + class databases before dropping references.
+            // Without this, AssetsManager holds file handles / MemoryStream data alive
+            // until the next full GC cycle — causing RAM to spike when many bundles are open.
+            try { OpenManager?.UnloadAll(true); } catch { }
+            OpenFiles   = Array.Empty<AssetsFileInstance?>();
+            OpenManager = null;
+        }
         finally { _lock.Release(); }
     }
 }
+
 
 internal static class FontTypeGuard
 {
@@ -102,6 +133,7 @@ public sealed class BundleRegistry : IDisposable
     private readonly List<BundleSlot>  _slots       = new();
     private          AssetDescriptor[] _descriptors = Array.Empty<AssetDescriptor>();
     private          int               _count       = 0;
+    private          int               _scansSinceLastGc = 0;
 
     public ReadOnlySpan<AssetDescriptor> All   => _descriptors.AsSpan(0, _count);
     public int                           Count => _count;
@@ -114,6 +146,7 @@ public sealed class BundleRegistry : IDisposable
         _slots.Clear();
         _descriptors = Array.Empty<AssetDescriptor>();
         _count = 0;
+        _scansSinceLastGc = 0;
         ScanErrors.Clear();
         SkippedFontBundles.Clear();
     }
@@ -121,37 +154,79 @@ public sealed class BundleRegistry : IDisposable
     /// <summary>
     /// Scans a file: extracts type name + asset name without full GetBaseField deserialization
     /// for unnamed asset types. Writes descriptors directly into _descriptors[] — no
-    /// intermediate list. Hints GC between files so dead scan managers are collected promptly.
+    /// intermediate list.
+    ///
+    /// FIX: the scan AssetsManager is now explicitly unloaded after scanning so that
+    /// its internal bundle data, type database, and any MemoryStreams it holds are freed
+    /// immediately — not left for a future GC cycle. With hundreds of bundles, the old
+    /// code was silently accumulating hundreds of MB of orphaned data between GC passes.
     /// </summary>
-    public void ScanFile(string filePath, string displayName)
+    public void ScanFile(string filePath, string displayName, string? safUri = null)
     {
         int slotIndex   = _slots.Count;
         int countBefore = _count;
 
+        // Use a dedicated manager for scanning — it will be fully unloaded after this method.
+        var mgr = new AssetsManager();
         try
         {
-            var mgr = new AssetsManager();
             bool any = false;
             try
             {
-                var bundle = mgr.LoadBundleFile(filePath);
-                var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                for (int i = 0; i < dirs.Count; i++)
+#if ANDROID
+                if (safUri != null)
                 {
+                    MemoryStream? ms = null;
                     try
                     {
-                        var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                        if (af?.file?.AssetInfos == null) continue;
-                        ScanSubFile(af, mgr, slotIndex, i);
-                        any = true;
+                        using var stream = AndroidDownloadService.OpenSafStream(safUri);
+                        ms = new MemoryStream();
+                        stream.CopyTo(ms);
+                        ms.Position = 0;
+                        var bundle = mgr.LoadBundleFile(ms, filePath, unpackIfPacked: true);
+                        var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                        for (int i = 0; i < dirs.Count; i++)
+                        {
+                            try
+                            {
+                                var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                                if (af?.file?.AssetInfos == null) continue;
+                                ScanSubFile(af, mgr, slotIndex, i);
+                                any = true;
+                            }
+                            catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
+                            {
+                                _count = countBefore;
+                                SkippedFontBundles.Add(displayName);
+                                return;
+                            }
+                            catch { }
+                        }
                     }
-                    catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
+                    finally { ms?.Dispose(); }
+                }
+                else
+#endif
+                {
+                    var bundle = mgr.LoadBundleFile(filePath);
+                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                    for (int i = 0; i < dirs.Count; i++)
                     {
-                        _count = countBefore;
-                        SkippedFontBundles.Add(displayName);
-                        return;
+                        try
+                        {
+                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                            if (af?.file?.AssetInfos == null) continue;
+                            ScanSubFile(af, mgr, slotIndex, i);
+                            any = true;
+                        }
+                        catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
+                        {
+                            _count = countBefore;
+                            SkippedFontBundles.Add(displayName);
+                            return;
+                        }
+                        catch { }
                     }
-                    catch { }
                 }
             }
             catch (InvalidOperationException fontEx) when (fontEx.Message.StartsWith("FONT_BUNDLE:"))
@@ -185,10 +260,6 @@ public sealed class BundleRegistry : IDisposable
                 }
             }
 
-            // mgr goes out of scope. Hint gen-0 GC to free decompressed bundle data
-            // before the next file is scanned. Prevents N dead managers piling up.
-            GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
-
             if (!any || _count == countBefore) { _count = countBefore; return; }
         }
         catch (Exception ex)
@@ -197,8 +268,28 @@ public sealed class BundleRegistry : IDisposable
             _count = countBefore;
             return;
         }
+        finally
+        {
+            // FIX: Always unload the scan manager so it releases its file handles,
+            // unpacked bundle data, MemoryStreams, and type tree caches immediately.
+            // Previously these were kept alive until an eventual GC, causing RAM to
+            // grow linearly with the number of bundles scanned.
+            try { mgr.UnloadAll(true); } catch { }
 
-        _slots.Add(new BundleSlot(displayName, filePath));
+            _scansSinceLastGc++;
+            if (_scansSinceLastGc >= 10)   // more frequent than before — every 10 files
+            {
+                _scansSinceLastGc = 0;
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive,
+                           blocking: true, compacting: true);
+            }
+            else
+            {
+                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
+            }
+        }
+
+        _slots.Add(new BundleSlot(displayName, filePath, safUri));
     }
 
     /// <summary>
@@ -240,6 +331,7 @@ public sealed class BundleRegistry : IDisposable
 
             if (FontTypeGuard.IsBlocked(tc.TypeName))
                 throw new InvalidOperationException("FONT_BUNDLE:" + tc.TypeName);
+
             type    = tc.TypeName;
             hasName = tc.HasName;
 
@@ -275,6 +367,12 @@ public sealed class BundleRegistry : IDisposable
 
     public string GetBundleName(int slot)
         => slot >= 0 && slot < _slots.Count ? _slots[slot].DisplayName : "";
+
+    public void ReleaseSlot(int slot)
+    {
+        if (slot >= 0 && slot < _slots.Count)
+            _slots[slot].Release();
+    }
 
     private void EnsureCapacity(int needed)
     {

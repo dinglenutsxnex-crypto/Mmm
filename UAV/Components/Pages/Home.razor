@@ -765,8 +765,8 @@
         font-family: 'Consolas', monospace;
         z-index: 9999;
         box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-        animation: toast-in 0.2s ease;
         cursor: pointer;
+        animation: toast-in 0.2s ease;
     }
 
     @@keyframes toast-in {
@@ -1057,10 +1057,12 @@
 
     // ── Selected asset (descriptor value) ─────────────────────────────────────
     AssetDescriptor? selectedDesc;
+    int              _lastOpenSlot = -1;
 
     // ── UI state ──────────────────────────────────────────────────────────────
     string searchQuery = "";
     string error = "";
+    string? _toastMessage = null;
     string bundleFileName = "";
     bool loading = false;
     bool inspectorLoading = false;
@@ -1078,9 +1080,6 @@
     bool _ctxVisible = false;
     AssetDescriptor? _ctxDesc;
     double _ctxX, _ctxY;
-
-    // Toast
-    string? _toastMessage = null;
 
     // Inspector results
     AssetTypeValueField? inspectorFields;
@@ -1174,7 +1173,7 @@
         _toastMessage = $"{n} font bundle{(n == 1 ? "" : "s")} skipped — crash prevention.";
     }
 
-    // ── File picker ──────────────────────────────────────────────────────────
+        // ── File picker ──────────────────────────────────────────────────────────
     void ResetState()
     {
         _registry.Clear();
@@ -1222,25 +1221,37 @@
             if (safUri == null) { loading = false; return; }
 
             var folderName = System.IO.Path.GetFileName(safUri.TrimEnd('/')) is { Length: > 0 } n ? n : "folder";
-            bundleFileName = $"📁 {folderName}";
+            bundleFileName = $" {folderName}";
             StateHasChanged();
 
-            List<(string DisplayName, string TempPath)> safFiles = new();
+            List<(string DisplayName, string DocumentUri)> safFiles = new();
             await Task.Run(() => safFiles = AndroidDownloadService.GetFilesFromSafUri(safUri));
 
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
+            bool _memLimitAndroid = false;
             await Task.Run(async () =>
             {
-                foreach (var (displayName, tmpPath) in safFiles)
+                foreach (var (displayName, documentUri) in safFiles)
                 {
-                    _registry.ScanFile(tmpPath, displayName);
+                    // FIX: check available RAM before each bundle.
+                    // If RAM is critically low, try to recover via GC first.
+                    // If memory is still too low after recovery, stop loading
+                    // rather than crash the app.
+                    if (MemoryGuard.IsMemoryLow())
+                    {
+                        bool recovered = await MemoryGuard.TryRecoverAsync();
+                        if (!recovered) { _memLimitAndroid = true; break; }
+                    }
+                    _registry.ScanFile(displayName, displayName, safUri: documentUri);
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
                 }
             });
+            if (_memLimitAndroid)
+                error = $"Stopped at {_loadDone}/{_loadTotal} files — RAM too low ({MemoryGuard.GetStatusString()}). {_registry.Count} assets loaded.";
 #else
             string? folderPath = null;
 #if WINDOWS
@@ -1257,21 +1268,33 @@
 #endif
             if (string.IsNullOrEmpty(folderPath)) { loading = false; return; }
 
-            bundleFileName = $"📁 {System.IO.Path.GetFileName(folderPath)}";
+            bundleFileName = $" {System.IO.Path.GetFileName(folderPath)}";
             var files = Directory.GetFiles(folderPath);
             _loadTotal = files.Length;
             StateHasChanged();
 
+            bool _memLimitDesktop = false;
             await Task.Run(async () =>
             {
                 foreach (var filePath in files)
                 {
+                    // FIX: check available RAM before each bundle.
+                    // If RAM is critically low, try to recover via GC first.
+                    // If memory is still too low after recovery, stop loading
+                    // rather than crash the app.
+                    if (MemoryGuard.IsMemoryLow())
+                    {
+                        bool recovered = await MemoryGuard.TryRecoverAsync();
+                        if (!recovered) { _memLimitDesktop = true; break; }
+                    }
                     _registry.ScanFile(filePath, Path.GetFileName(filePath));
                     _loadDone++;
                     if (_loadDone % 5 == 0)
                         await InvokeAsync(StateHasChanged);
                 }
             });
+            if (_memLimitDesktop)
+                error = $"Stopped at {_loadDone}/{_loadTotal} files — RAM too low ({MemoryGuard.GetStatusString()}). {_registry.Count} assets loaded.";
 #endif
             _filterDirty = true;
             bundleFileName = $"{_registry.Count} assets · {bundleFileName}";
@@ -1295,6 +1318,9 @@
 
     async Task SelectDescriptor(AssetDescriptor desc)
     {
+        if (_lastOpenSlot >= 0 && _lastOpenSlot != desc.BundleSlot)
+            _registry.ReleaseSlot(_lastOpenSlot);
+
         selectedDesc = desc;
         inspectorFields = null; textureResult = null; meshResult = null;
         inspectorLoading = true; textureLoading = true; meshLoading = desc.Type == "Mesh";
@@ -1308,6 +1334,7 @@
         {
             var af = await _registry.GetLiveFileAsync(desc);
             if (af == null) { inspectorLoading = false; textureLoading = false; meshLoading = false; return; }
+            _lastOpenSlot = desc.BundleSlot;
 
             await Task.Run(() =>
             {
@@ -1392,8 +1419,23 @@
             using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
             {
                 var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                // FIX: Track the currently open bundle slot so we can release it
+                // when we move to the next bundle. Previously ALL bundles were opened
+                // and kept alive simultaneously for the entire export, causing a RAM spike
+                // proportional to (number of bundles × average bundle size).
+                int exportActiveSlot = -1;
+
                 foreach (var desc in list)
                 {
+                    // Release the previous bundle when we switch to a new one
+                    if (exportActiveSlot >= 0 && exportActiveSlot != desc.BundleSlot)
+                    {
+                        _registry.ReleaseSlot(exportActiveSlot);
+                        GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
+                    }
+                    exportActiveSlot = desc.BundleSlot;
+
                     try
                     {
                         var af = await _registry.GetLiveFileAsync(desc);
@@ -1450,6 +1492,10 @@
                     }
                     catch { /* skip failed asset */ }
                 }
+
+                // Release the last open slot when done
+                if (exportActiveSlot >= 0)
+                    _registry.ReleaseSlot(exportActiveSlot);
             }
             zipStream.Position = 0;
             var zipName = SafeName(Path.GetFileNameWithoutExtension(bundleFileName));
@@ -1542,7 +1588,7 @@
 
             int af  = format;
             int expectedRgba8 = ((width + 3) / 4) * ((height + 3) / 4) * 16;
-            if (format == 47 && imageData.Length >= expectedRgba8) { af = 49; }
+            if (format == 47 && imageData.Length >= expectedRgba8) { af = 48; }
 
             try
             {
