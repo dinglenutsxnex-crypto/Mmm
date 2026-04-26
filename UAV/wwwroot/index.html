@@ -109,6 +109,13 @@
                 else if (itemBot > el.scrollTop + el.clientHeight)
                     el.scrollTop = itemBot - el.clientHeight;
             },
+            scrollBy: function (containerId, deltaY) {
+                const o = window.VirtualTable._observers[containerId];
+                if (!o) return;
+                // Suppress the scroll event this adjustment fires — it's not a user scroll.
+                o.suppressCount = (o.suppressCount || 0) + 1;
+                o.el.scrollTop += deltaY;
+            },
             restoreScroll: function (containerId, scrollTop) {
                 const o = window.VirtualTable._observers[containerId];
                 if (!o) return;

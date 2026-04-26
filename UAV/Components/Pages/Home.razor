@@ -1060,6 +1060,7 @@
     const int TRIGGER = 50;  // slide when within this many rows of edge
     int _winStart = 0;
     int _winEnd   = 0;
+    int _pendingScrollDelta = 0; // pixel correction to apply after next render
 
     IReadOnlyList<AssetDescriptor> FilteredAssets
     {
@@ -1807,6 +1808,15 @@
             await JS.InvokeVoidAsync("VirtualTable.attach", _selfRef, "bi-table-wrap");
             await JS.InvokeVoidAsync("PanelResize.init");
         }
+        else if (_pendingScrollDelta != 0)
+        {
+            int delta = _pendingScrollDelta;
+            _pendingScrollDelta = 0;
+            // scrollBy is relative — it does NOT fire a new scroll event that would
+            // re-trigger NotifyScroll. This keeps the viewport exactly where the user
+            // left it after the virtual window slides in either direction.
+            await JS.InvokeVoidAsync("VirtualTable.scrollBy", "bi-table-wrap", delta);
+        }
     }
 
     System.Threading.CancellationTokenSource? _scrollCts;
@@ -1814,10 +1824,7 @@
     [JSInvokable]
     public void NotifyScroll(double scrollTop, double clientHeight, double scrollHeight, double timestamp)
     {
-        // Use _filteredCache directly — never call FilteredAssets here.
-        // FilteredAssets is a property that can trigger RebuildFilterIfDirty(), which
-        // resets _winEnd to 0. That would immediately re-trigger the slide-down condition
-        // on the very next scroll event, creating an infinite re-render loop.
+        // Use _filteredCache directly — never call FilteredAssets (property) here.
         int total = _filteredCache.Count;
         if (total == 0) return;
 
@@ -1827,8 +1834,12 @@
         // Slide down: viewport bottom is within TRIGGER rows of window end
         if (botRow + TRIGGER >= _winEnd && _winEnd < total)
         {
+            int oldStart = _winStart;
             _winEnd   = Math.Min(total, _winEnd + TRIGGER);
             _winStart = Math.Max(0, _winEnd - BUF * 2);
+            // If winStart moved forward, the top spacer grew by that many pixels.
+            // We must scroll DOWN by the same amount after render to stay put.
+            _pendingScrollDelta += (_winStart - oldStart) * ROW_H;
             InvokeAsync(StateHasChanged);
             return;
         }
@@ -1836,8 +1847,11 @@
         // Slide up: viewport top is within TRIGGER rows of window start
         if (topRow - TRIGGER <= _winStart && _winStart > 0)
         {
+            int oldStart = _winStart;
             _winStart = Math.Max(0, _winStart - TRIGGER);
             _winEnd   = Math.Min(total, _winStart + BUF * 2);
+            // If winStart moved back, the top spacer shrank — scroll UP to compensate.
+            _pendingScrollDelta += (_winStart - oldStart) * ROW_H;
             InvokeAsync(StateHasChanged);
         }
     }
