@@ -54,10 +54,10 @@ jobs:
         run: dotnet workload install maui --ignore-failed-sources
 
       - name: Restore dependencies
-        run: dotnet restore "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj"
+        run: dotnet restore "UAV/UAV.csproj"
 
       - name: Publish Android AAB
-        run: dotnet publish "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj" -f net10.0-android -c Release --no-restore /p:AndroidPackageFormat=aab
+        run: dotnet publish "UAV/UAV.csproj" -f net10.0-android -c Release --no-restore /p:AndroidPackageFormat=aab
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4

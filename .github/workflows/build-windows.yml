@@ -48,28 +48,28 @@ jobs:
         run: dotnet workload install maui --ignore-failed-sources
 
       - name: Restore dependencies
-        run: dotnet restore "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj"
+        run: dotnet restore "UAV/UAV.csproj"
 
       - name: Publish Windows
-        run: dotnet publish "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj" -f net10.0-windows10.0.19041.0 -c Release
+        run: dotnet publish "UAV/UAV.csproj" -f net10.0-windows10.0.19041.0 -c Release
 
       - name: List build outputs
         run: |
-          Get-ChildItem -Recurse "MauiApp bareiron viewer/bin" | Select-Object FullName
+          Get-ChildItem -Recurse "UAV/bin" | Select-Object FullName
         shell: pwsh
 
       - name: Upload Windows
         uses: actions/upload-artifact@v4
         with:
           name: windows-msix
-          path: 'MauiApp bareiron viewer/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish/*.msix'
+          path: 'UAV/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish/*.msix'
           retention-days: 14
-        if: hashFiles('MauiApp bareiron viewer/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish/*.msix') != ''
+        if: hashFiles('UAV/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish/*.msix') != ''
 
       - name: Upload Windows (fallback)
         uses: actions/upload-artifact@v4
         with:
           name: windows-msix
-          path: 'MauiApp bareiron viewer/bin/Release/net10.0-windows10.0.19041.0/win-x64/*.msix'
+          path: 'UAV/bin/Release/net10.0-windows10.0.19041.0/win-x64/*.msix'
           retention-days: 1
-        if: hashFiles('MauiApp bareiron viewer/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish/*.msix') == ''
+        if: hashFiles('UAV/bin/Release/net10.0-windows10.0.19041.0/win-x64/publish/*.msix') == ''

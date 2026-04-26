@@ -58,19 +58,19 @@ jobs:
         run: dotnet workload install maui --ignore-failed-sources
 
       - name: Restore dependencies
-        run: dotnet restore "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj"
+        run: dotnet restore "UAV/UAV.csproj"
 
       - name: Publish Android APK
-        run: dotnet publish "MauiApp bareiron viewer/MauiApp bareiron viewer.csproj" -f net10.0-android -c Release --no-restore /p:AndroidPackageFormat=apk
+        run: dotnet publish "UAV/UAV.csproj" -f net10.0-android -c Release --no-restore /p:AndroidPackageFormat=apk
 
       - name: Remove unsigned APKs
         run: |
-          Get-ChildItem "MauiApp bareiron viewer/bin/Release/net10.0-android/publish/*.apk" | Where-Object { $_.Name -notlike "*-signed.apk" } | Remove-Item
+          Get-ChildItem "UAV/bin/Release/net10.0-android/publish/*.apk" | Where-Object { $_.Name -notlike "*-signed.apk" } | Remove-Item
         shell: pwsh
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: 'MauiApp bareiron viewer/bin/Release/net10.0-android/publish/*.apk'
+          path: 'UAV/bin/Release/net10.0-android/publish/*.apk'
           retention-days: 1

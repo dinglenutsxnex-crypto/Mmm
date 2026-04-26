@@ -1,0 +1,76 @@
+@using AssetsTools.NET
+@using UAV.Services
+@inject IJSRuntime JS
+
+@if (Loading)
+{
+    <div class="preview-loading">Parsing mesh...</div>
+}
+else
+{
+    <div class="mesh-preview">
+        @if (!string.IsNullOrEmpty(Error))
+        {
+            <div class="preview-error">@Error</div>
+        }
+        @if (MeshData != null && MeshData.Success)
+        {
+            <div class="preview-info">
+                @MeshData.VertexCount verts · @MeshData.TriangleCount tris · @MeshData.SubMeshCount submesh(es)
+            </div>
+            <canvas id="meshCanvas_@_id" class="mesh-canvas" width="480" height="320"></canvas>
+            <div class="mesh-controls">
+                <span class="mesh-hint">drag to rotate · scroll to zoom</span>
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .mesh-preview { margin-top: 8px; }
+    .mesh-canvas {
+        width: 100%; max-width: 480px; height: 320px;
+        border: 1px solid #333; border-radius: 4px;
+        background: #1a1a1a; display: block; cursor: grab;
+    }
+    .mesh-canvas:active { cursor: grabbing; }
+    .mesh-controls { margin-top: 4px; display: flex; align-items: center; gap: 8px; }
+    .mesh-hint { font-size: 10px; color: #555; font-family: 'Consolas', monospace; }
+    .preview-error { color: #f48771; font-size: 11px; font-family: 'Consolas', monospace; padding: 8px 0; }
+    .preview-loading { color: #888; font-size: 11px; padding: 8px 0; }
+    .preview-info { font-size: 10px; color: #888; font-family: 'Consolas', monospace; margin-bottom: 4px; }
+</style>
+
+@code {
+    [Parameter] public MeshParseResult? MeshData { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public string? AssetName { get; set; }
+    [Parameter] public AssetTypeValueField? RawFields { get; set; }
+
+    private string? Error => MeshData?.Error;
+    private string _id = Guid.NewGuid().ToString("N")[..8];
+    private bool _rendered = false;
+
+    protected override Task OnParametersSetAsync()
+    {
+        _rendered = false;
+        return Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_rendered && MeshData?.Success == true &&
+            MeshData.Vertices != null && MeshData.Indices != null)
+        {
+            _rendered = true;
+            try
+            {
+                await JS.InvokeVoidAsync("MeshViewer.init", $"meshCanvas_{_id}", MeshData.Vertices, MeshData.Indices);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[MeshPreview] JS init failed: {ex.Message}");
+            }
+        }
+    }
+}

@@ -1,0 +1,1753 @@
+@page "/"
+@layout EmptyLayout
+@using AssetsTools.NET
+@using AssetsTools.NET.Extra
+@using UAV.Services
+@using System.IO
+@using System.IO.Compression
+@using System.Text.Json
+@inject IJSRuntime JS
+@implements IDisposable
+
+<style>
+    :root {
+        --bg: #1e1e1e;
+        --panel: #252526;
+        --header: #333333;
+        --text: #cccccc;
+        --accent: #007acc;
+        --border: #3e3e42;
+        --hover: #2a2d2e;
+        --active: #37373d;
+        --terminal-green: #4af626;
+        --highlight: #094771;
+        --danger: #d63031;
+        --success: #00b894;
+        --row-height: 28px;
+        --divider: #555555;
+    }
+
+    .bi-root {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Segoe UI',sans-serif;
+        overflow: hidden;
+        user-select: none;
+    }
+
+    /* ── Nav ── */
+    .bi-nav {
+        height: 45px;
+        background: var(--header);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 15px;
+        flex-shrink: 0;
+        z-index: 20;
+    }
+
+    .bi-nav-title {
+        font-weight: 700;
+        font-size: 15px;
+        letter-spacing: 0.5px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .gradient-text {
+        background: linear-gradient(to right,#ff8c00,#ff0000);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .bi-nav-controls {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+    }
+
+    /* ── Buttons ── */
+    .bi-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: #ccc;
+        padding: 6px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: 'Segoe UI',sans-serif;
+        white-space: nowrap;
+    }
+
+        .bi-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: white;
+        }
+
+        .bi-btn:active {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .bi-btn:disabled {
+            opacity: 0.4;
+            cursor: default;
+            pointer-events: none;
+        }
+
+    /* ── Dropdowns ── */
+    .nav-dd-wrap {
+        position: relative;
+    }
+
+    .nav-dropdown {
+        position: absolute;
+        top: calc(100% + 5px);
+        left: 0;
+        background: #252526;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.65);
+        display: none;
+        flex-direction: column;
+        min-width: 200px;
+        z-index: 9999;
+        max-height: 420px;
+        overflow-y: auto;
+    }
+
+        .nav-dropdown.show {
+            display: flex;
+        }
+
+        .nav-dropdown.align-right {
+            left: auto;
+            right: 0;
+        }
+
+    .dd-item {
+        padding: 9px 14px;
+        font-size: 13px;
+        cursor: pointer;
+        color: #ddd;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        white-space: nowrap;
+    }
+
+        .dd-item:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        .dd-item.dd-disabled {
+            opacity: 0.4;
+            pointer-events: none;
+        }
+
+    .dd-divider {
+        height: 1px;
+        background: var(--border);
+        margin: 2px 0;
+        flex-shrink: 0;
+    }
+
+    .dd-label {
+        font-size: 11px;
+        color: #888;
+        padding: 5px 14px 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .dd-check-row {
+        padding: 8px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 13px;
+        cursor: pointer;
+        color: #ddd;
+    }
+
+        .dd-check-row:hover {
+            background: #333;
+        }
+
+        .dd-check-row input[type=checkbox] {
+            margin: 0;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+    .dd-filter-act {
+        padding: 6px 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        cursor: pointer;
+        color: #aaa;
+    }
+
+        .dd-filter-act:hover {
+            color: white;
+            background: #2a2a2a;
+        }
+
+    /* ── Filename ── */
+    .bi-filename {
+        font-size: 12px;
+        color: #666;
+        padding: 0 6px;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* ── Main layout ── */
+    .bi-main {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+    }
+
+    .bi-assets-panel {
+        width: 400px;
+        min-width: 150px;
+        background: #202020;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+
+    .bi-table-wrap table.bi-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+
+    .col-name {
+        width: var(--col-name-w, auto);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .bi-panel-header {
+        height: 36px;
+        background: #2d2d2d;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    .bi-search {
+        flex: 1;
+        background: #111;
+        border: 1px solid #444;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        outline: none;
+        font-family: 'Segoe UI',sans-serif;
+    }
+
+        .bi-search:focus {
+            border-color: var(--accent);
+        }
+
+    .bi-count {
+        font-size: 11px;
+        color: #666;
+        white-space: nowrap;
+    }
+
+    .bi-table-wrap {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;        /* stop parent scroll / inertia chaining */
+        scrollbar-gutter: stable;           /* always reserve scrollbar space */
+        -webkit-overflow-scrolling: touch;   /* smooth momentum on iOS */
+    }
+
+        .bi-table-wrap::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .bi-table-wrap::-webkit-scrollbar-track {
+            background: #1a1a1a;
+            border-radius: 4px;
+        }
+
+        .bi-table-wrap::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 4px;
+        }
+
+            .bi-table-wrap::-webkit-scrollbar-thumb:hover {
+                background: #777;
+            }
+
+    /* ── Table ── */
+    table.bi-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        table-layout: fixed;
+    }
+
+        table.bi-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            background: #2d2d2d;
+        }
+
+        table.bi-table th {
+            padding: 6px 8px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: #888;
+            border-bottom: 1px solid var(--border);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        table.bi-table td {
+            padding: 0 8px;
+            height: var(--row-height);
+            border-bottom: 1px solid #2a2a2a;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+    .col-pathid {
+        width: var(--col-pathid-w, 70px);
+    }
+
+    .col-type {
+        width: 110px;
+    }
+
+    .col-size {
+        width: 65px;
+        text-align: right;
+        padding-right: 12px !important;
+    }
+
+    .col-hidden {
+        display: none !important;
+    }
+
+    table.bi-table tbody tr {
+        cursor: pointer;
+    }
+
+        table.bi-table tbody tr:hover {
+            background: var(--hover);
+        }
+
+        table.bi-table tbody tr.selected {
+            background: var(--highlight) !important;
+            color: white;
+        }
+
+    .bi-empty {
+        text-align: center;
+        color: #555;
+        padding: 40px 0;
+        font-size: 13px;
+    }
+
+    .type-cell {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        height: 100%;
+    }
+
+    .type-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    /* ── Drag / inspector ── */
+    .bi-drag {
+        width: 5px;
+        background: var(--border);
+        cursor: col-resize;
+        transition: background 0.2s;
+        flex-shrink: 0;
+    }
+
+        .bi-drag:hover {
+            background: var(--accent);
+        }
+
+    .bi-inspector-panel {
+        flex: 1;
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-width: 100px;
+    }
+
+    .bi-inspector-header {
+        height: 36px;
+        background: #2d2d2d;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+    }
+
+    .bi-tab {
+        background: transparent;
+        border: none;
+        color: #888;
+        font-size: 12px;
+        padding: 0 15px;
+        cursor: pointer;
+        height: 100%;
+        border-bottom: 2px solid transparent;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        font-family: 'Segoe UI',sans-serif;
+    }
+
+        .bi-tab:hover {
+            color: #ccc;
+            background: rgba(255,255,255,0.05);
+        }
+
+        .bi-tab.active {
+            color: white;
+            border-bottom-color: var(--accent);
+        }
+
+    .bi-inspector-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px;
+        font-size: 12px;
+    }
+
+        .bi-inspector-body::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .bi-inspector-body::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+
+        .bi-inspector-body::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 2px;
+        }
+
+    .bi-no-select {
+        color: #555;
+        font-size: 13px;
+        margin: 40px auto;
+        text-align: center;
+    }
+
+    /* ── Fields ── */
+    .field-tree {
+        font-family: 'Consolas',monospace;
+        font-size: 11px;
+    }
+
+    .field-node {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .field-row {
+        display: flex;
+        align-items: baseline;
+        padding: 2px 0;
+        border-bottom: 1px solid #2a2a2a;
+        font-size: 11px;
+        line-height: 1.6;
+        gap: 8px;
+        font-family: 'Consolas',monospace;
+    }
+
+    .field-type {
+        color: #569cd6;
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .field-name {
+        color: #9cdcfe;
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .field-value {
+        color: #ce9178;
+        word-break: break-all;
+    }
+
+    .field-children {
+        padding-left: 16px;
+        border-left: 1px solid #333;
+        margin-left: 8px;
+    }
+
+    .field-header {
+        font-size: 11px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .asset-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: white;
+        margin-bottom: 4px;
+    }
+
+    .asset-subtitle {
+        font-size: 11px;
+        color: #888;
+        margin-bottom: 8px;
+    }
+
+    .bi-loading {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #888;
+        font-size: 13px;
+        padding: 20px;
+    }
+
+    .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid #444;
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        flex-shrink: 0;
+    }
+
+    @@keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .bi-error {
+        background: #2d1a1a;
+        border: 1px solid #5a2d2d;
+        color: #f48771;
+        padding: 8px 12px;
+        border-radius: 3px;
+        font-size: 12px;
+        margin: 8px;
+        font-family: 'Consolas',monospace;
+    }
+
+    /* ── About modal ── */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.65);
+        z-index: 500;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .modal-box {
+        background: #252526;
+        border: 1px solid #555;
+        border-radius: 5px;
+        min-width: 320px;
+        max-width: 440px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+        overflow: hidden;
+    }
+
+    .modal-hdr {
+        padding: 13px 18px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-weight: 700;
+        font-size: 12px;
+        color: #ccc;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .modal-close-x {
+        background: none;
+        border: none;
+        color: #666;
+        font-size: 15px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+    }
+
+        .modal-close-x:hover {
+            color: white;
+        }
+
+    .modal-body {
+        padding: 18px;
+        font-size: 13px;
+        color: #bbb;
+        line-height: 1.7;
+    }
+
+    .modal-ftr {
+        padding: 10px 18px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: flex-end;
+        background: #2d2d2d;
+    }
+
+    .modal-close-btn {
+        padding: 6px 20px;
+        background: #383838;
+        border: 1px solid #555;
+        color: #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        font-family: 'Segoe UI',sans-serif;
+    }
+
+        .modal-close-btn:hover {
+            background: #444;
+            color: white;
+        }
+
+    .credit-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 7px 0;
+        border-bottom: 1px solid #2a2a2a;
+    }
+
+        .credit-row:last-child {
+            border-bottom: none;
+        }
+
+    .credit-icon {
+        font-size: 18px;
+        width: 26px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+
+    .credit-name {
+        font-weight: 600;
+        color: #ddd;
+        font-size: 13px;
+    }
+
+    .credit-role {
+        font-size: 11px;
+        color: #666;
+    }
+
+    /* ── Context menu ── */
+    .ctx-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 8000;
+        background: transparent;
+    }
+
+    .ctx-menu {
+        position: absolute;
+        background: #2d2d30;
+        border: 1px solid #555;
+        border-radius: 4px;
+        box-shadow: 0 8px 22px rgba(0,0,0,0.65);
+        min-width: 210px;
+        font-size: 13px;
+        overflow: hidden;
+        user-select: none;
+    }
+
+    .ctx-header {
+        padding: 5px 12px;
+        font-size: 10px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background: #252526;
+    }
+
+    .ctx-bundle-name {
+        padding: 6px 12px 8px;
+        color: #4ec9b0;
+        font-size: 11px;
+        font-family: Consolas, monospace;
+        word-break: break-all;
+        max-width: 260px;
+        background: #252526;
+        border-bottom: 1px solid #3e3e42;
+    }
+
+    .ctx-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        color: #ddd;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid #2a2a2a;
+    }
+
+        .ctx-item:last-child { border-bottom: none; }
+
+        .ctx-item:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+    /* ── Toast ── */
+    .bi-toast {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #2d1a1a;
+        border: 1px solid #5a2d2d;
+        color: #f48771;
+        padding: 10px 16px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-family: 'Segoe UI', sans-serif;
+        z-index: 9999;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+        animation: toast-in 0.2s ease;
+        pointer-events: none;
+    }
+
+    @@keyframes toast-in {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+</style>
+
+<div class="bi-root" @onclick="CloseAllDropdowns">
+
+    <!-- ═══════════ NAV BAR ═══════════ -->
+    <div class="bi-nav">
+        <div class="bi-nav-title">
+            <i class="fa-brands fa-unity" style="color:#fff; font-size:16px; -webkit-text-fill-color:#fff;"></i>
+            <span class="gradient-text">UAV</span>
+        </div>
+
+        <div class="bi-nav-controls" @onclick:stopPropagation>
+
+            <!-- LOAD -->
+            <div class="nav-dd-wrap">
+                <button class="bi-btn" @onclick="@(() => ToggleDropdown("load"))" disabled="@loading" title="Load Bundle">
+                    <i class="fa-solid fa-folder-open"></i> Load
+                </button>
+                <div class="nav-dropdown @(activeDropdown == "load" ? "show" : "")">
+                    <div class="dd-item" @onclick="PickFile">
+                        <span><i class="fa-regular fa-file" style="width:16px; margin-right:4px;"></i>File</span>
+                    </div>
+                    <div class="dd-item" @onclick="PickFolder">
+                        <span><i class="fa-solid fa-folder-open" style="width:16px; margin-right:4px;"></i>Folder</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DOWNLOAD -->
+            <div class="nav-dd-wrap">
+                <button class="bi-btn" @onclick="@(() => ToggleDropdown("download"))" disabled="@(_registry.Count == 0 || loading)" title="Download Assets">
+                    <i class="fa-solid fa-download"></i> Download
+                </button>
+                <div class="nav-dropdown @(activeDropdown == "download" ? "show" : "")">
+                    <div class="dd-item @(selectedDesc == null || inspectorLoading || textureLoading || meshLoading ? "dd-disabled" : "")"
+                         @onclick="ExportSelected">
+                        <span>Selected Asset</span> <i class="fa-solid fa-file-export"></i>
+                    </div>
+                    <div class="dd-item @(FilteredAssets.Count == 0 ? "dd-disabled" : "")"
+                         @onclick="DownloadAllFiltered">
+                        <span>All (Filtered List)</span> <i class="fa-solid fa-file-zipper"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FILTER -->
+            <div class="nav-dd-wrap">
+                <button class="bi-btn" @onclick="@(() => ToggleDropdown("filter"))" disabled="@(_registry.Count == 0)" title="Filter Types">
+                    <i class="fa-solid fa-filter"></i> Filter
+                </button>
+                <div class="nav-dropdown align-right @(activeDropdown == "filter" ? "show" : "")" style="min-width:200px;">
+                    <div class="dd-filter-act" @onclick="SelectAllTypes">
+                        <i class="fa-solid fa-check-double"></i> Select All
+                    </div>
+                    <div class="dd-filter-act" @onclick="SelectNoTypes">
+                        <i class="fa-regular fa-square"></i> Select None
+                    </div>
+                    <div class="dd-divider"></div>
+                    @foreach (var t in AvailableTypes)
+                    {
+                        var tc = t;
+                        <div class="dd-check-row" @onclick="@(() => ToggleTypeFilter(tc))" @onclick:stopPropagation>
+                            <span style="display:flex; align-items:center; gap:6px;">
+                                <span class="type-dot" style="background:@GetTypeColor(tc)"></span>@tc
+                            </span>
+                            <input type="checkbox" @onclick:stopPropagation checked="@(!hiddenTypes.Contains(tc))" @onchange="@(() => ToggleTypeFilter(tc))" />
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- VIEW -->
+            <div class="nav-dd-wrap">
+                <button class="bi-btn" @onclick="@(() => ToggleDropdown("view"))" title="View Options">
+                    <i class="fa-solid fa-bars"></i> View
+                </button>
+                <div class="nav-dropdown align-right @(activeDropdown == "view" ? "show" : "")" style="width:215px;">
+                    <div class="dd-label">List Options</div>
+                    <div class="dd-check-row" @onclick="@(() => showPathId = !showPathId)" @onclick:stopPropagation>
+                        <span>Path ID Column</span>
+                        <input type="checkbox" @onclick:stopPropagation checked="@showPathId" @onchange="@(() => showPathId = !showPathId)" />
+                    </div>
+                    <div class="dd-check-row" @onclick="@(() => showSize = !showSize)" @onclick:stopPropagation>
+                        <span>Asset Size Column</span>
+                        <input type="checkbox" @onclick:stopPropagation checked="@showSize" @onchange="@(() => showSize = !showSize)" />
+                    </div>
+                    <div class="dd-check-row" @onclick="@(() => showColorCode = !showColorCode)" @onclick:stopPropagation>
+                        <span>Color Code Types</span>
+                        <input type="checkbox" @onclick:stopPropagation checked="@showColorCode" @onchange="@(() => showColorCode = !showColorCode)" />
+                    </div>
+                </div>
+            </div>
+
+            <!-- ABOUT -->
+            <a href="/credits" class="bi-btn" title="About">
+                <i class="fa-solid fa-circle-info"></i> About
+            </a>
+
+            @if (!string.IsNullOrEmpty(bundleFileName))
+            {
+                <span class="bi-filename" title="@bundleFileName">@bundleFileName</span>
+            }
+        </div>
+    </div>
+    <!-- ════════════════════════════ -->
+
+    <div class="bi-main">
+
+        <!-- ASSET LIST PANEL -->
+        <div class="bi-assets-panel">
+            <div class="bi-panel-header">
+                <input class="bi-search" type="text" placeholder="Search assets (name, type, path ID)..."
+                       value="@searchQuery"
+                       @oninput="OnSearchInput" />
+                <span class="bi-count">@FilteredAssets.Count assets</span>
+            </div>
+            <div class="bi-table-wrap" id="bi-table-wrap">
+                @if (loading)
+                {
+                    <div class="bi-loading">
+                        <div class="spinner"></div>
+                        @if (_loadTotal > 0)
+                        { <span>Loading bundles (@_loadDone / @_loadTotal)...</span> }
+                        else
+                        { <span>Loading...</span> }
+                    </div>
+                }
+                else if (!string.IsNullOrEmpty(error))
+                {
+                    <div class="bi-error">@error</div>
+                }
+                else if (_registry.Count == 0)
+                {
+                    <div class="bi-empty">Load a .bundle or .assets file to begin</div>
+                }
+                else
+                {
+                    <table class="bi-table">
+                        <thead>
+                            <tr>
+                                <th class="col-pathid @(!showPathId ? "col-hidden" : "")">Path ID</th>
+                                <th class="col-type">Type</th>
+                                <th class="col-name">Name</th>
+                                <th class="col-size @(!showSize ? "col-hidden" : "")">Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ var _fa = FilteredAssets; }
+                            @for (int _i = 0; _i < Math.Min(_renderCount, _fa.Count); _i++)
+                            {
+                                var _a = _fa[_i];
+                                var _idx = _i;
+                                bool _sel = selectedDesc?.PathId == _a.PathId && selectedDesc?.BundleSlot == _a.BundleSlot;
+                                <tr class="@(_sel ? "selected" : "")"
+                                    @onclick="@(() => SelectByIndex(_idx))"
+                                    @oncontextmenu:preventDefault
+                                    @oncontextmenu="@(e => ShowCtxByIndex((_idx, e)))">
+                                    <td class="col-pathid @(!showPathId ? "col-hidden" : "")"
+                                        style="color:#666; font-family:Consolas,monospace;">@_a.PathId</td>
+                                    <td class="col-type">
+                                        <div class="type-cell">
+                                            @if (showColorCode)
+                                            {
+                                                <div class="type-dot" style="background:@GetTypeColor(_a.Type)"></div>
+                                            }
+                                            @_a.Type
+                                        </div>
+                                    </td>
+                                    <td class="col-name">@(string.IsNullOrEmpty(_a.Name) ? "(unnamed)" : _a.Name)</td>
+                                    <td class="col-size @(!showSize ? "col-hidden" : "")"
+                                        style="color:#666; font-family:Consolas,monospace;">@FormatSize(_a.ByteSize)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+
+        <div class="bi-drag" id="bi-drag"></div>
+
+        <!-- INSPECTOR PANEL -->
+        <div class="bi-inspector-panel">
+            <div class="bi-inspector-header">
+                <button class="bi-tab active">Inspector</button>
+            </div>
+            <div class="bi-inspector-body">
+                @if (selectedDesc == null)
+                {
+                    <div class="bi-no-select">Select an asset to inspect</div>
+                }
+                else
+                {
+                    <div class="asset-title">@(string.IsNullOrEmpty(selectedDesc.Value.Name) ? "(unnamed)" : selectedDesc.Value.Name)</div>
+                    <div class="asset-subtitle">@selectedDesc.Value.Type · PathID @selectedDesc.Value.PathId · @FormatSize(selectedDesc.Value.ByteSize)</div>
+
+                    @if (selectedDesc.Value.Type == "Texture2D" || selectedDesc.Value.Type == "Sprite")
+                    {
+                        <div class="field-header">Preview</div>
+                        <TexturePreview Result="textureResult" Loading="textureLoading" AssetName="@selectedDesc.Value.Name" />
+                    }
+
+                    @if (selectedDesc.Value.Type == "Mesh")
+                    {
+                        <div class="field-header">Preview</div>
+                        <MeshPreview MeshData="meshResult" Loading="meshLoading" AssetName="@selectedDesc.Value.Name" RawFields="inspectorFields" />
+                    }
+
+                    @if (inspectorFields != null)
+                    {
+                        <div class="field-header">Fields</div>
+                        @RenderFields(inspectorFields)
+                    }
+                    else if (inspectorLoading)
+                    {
+                        <div class="bi-loading"><div class="spinner"></div> Parsing fields...</div>
+                    }
+                }
+            </div>
+        </div>
+
+    </div>
+
+    @if (_ctxVisible && _ctxDesc != null)
+    {
+        <div class="ctx-overlay" @onclick="HideCtxMenu">
+            <div class="ctx-menu" style="left:@($"{_ctxX}px"); top:@($"{_ctxY}px")"
+                 @onclick:stopPropagation>
+                <!--[existing context menu] -->
+            </div>
+        </div>
+    }
+
+    @if (_toastVisible)
+    {
+        <div class="bi-toast">⚠ @_toastMessage</div>
+    }
+
+</div>
+
+@code {
+    // ── Registry (lazy bundle loader) ─────────────────────────────────────────
+    readonly BundleRegistry _registry = new();
+
+    // ── Filtered view — a List<AssetDescriptor> rebuilt on search/filter change ─
+    List<AssetDescriptor> _filteredCache = new();
+    string _lastSearchQuery  = "";
+    HashSet<string> _lastHiddenTypes = new();
+    bool _filterDirty = true;
+    int _renderCount = 200;
+
+    IReadOnlyList<AssetDescriptor> FilteredAssets
+    {
+        get
+        {
+            RebuildFilterIfDirty();
+            return _filteredCache;
+        }
+    }
+
+    void RebuildFilterIfDirty()
+    {
+        if (!_filterDirty) return;
+        _filterDirty = false;
+        _renderCount = 200;
+        _filteredCache.Clear();
+        var all = _registry.All;
+        for (int i = 0; i < all.Length; i++)
+        {
+            ref readonly var a = ref all[i];
+            if (hiddenTypes.Count > 0 && hiddenTypes.Contains(a.Type)) continue;
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+            {
+                if (!a.Name.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) &&
+                    !a.Type.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) &&
+                    !a.PathId.ToString().Contains(searchQuery))
+                    continue;
+            }
+            _filteredCache.Add(a);
+        }
+    }
+
+    // ── Selected asset (descriptor value) ─────────────────────────────────────
+    AssetDescriptor? selectedDesc;
+
+    // ── UI state ──────────────────────────────────────────────────────────────
+    string searchQuery = "";
+    string error = "";
+    string bundleFileName = "";
+    bool loading = false;
+    bool inspectorLoading = false;
+    string activeDropdown = "";
+    bool showPathId = false;
+    bool showSize = false;
+    bool showColorCode = true;
+    HashSet<string> hiddenTypes = new();
+
+    // Progress
+    int _loadDone = 0;
+    int _loadTotal = 0;
+
+    // Context menu
+    bool _ctxVisible = false;
+    AssetDescriptor? _ctxDesc;
+    double _ctxX, _ctxY;
+
+    // Toast
+    bool _toastVisible = false;
+    string _toastMessage = "";
+    System.Threading.CancellationTokenSource? _toastCts;
+
+    // Inspector results
+    AssetTypeValueField? inspectorFields;
+    TextureDecodeResult? textureResult;
+    bool textureLoading;
+    MeshParseResult? meshResult;
+    bool meshLoading;
+
+    // Available types for filter dropdown (rebuilt when registry changes)
+    IReadOnlyList<string> AvailableTypes =>
+        _registry.All.ToArray()
+            .Select(a => a.Type).Distinct().OrderBy(t => t).ToList();
+
+    // ── Download helpers ─────────────────────────────────────────────────────
+    async Task TriggerDownload(string filename, byte[] bytes, string mimeType)
+    {
+#if ANDROID
+        await AndroidDownloadService.SaveFileAsync(filename, bytes, mimeType);
+#else
+        await JS.InvokeVoidAsync("MeshViewer.downloadArrayBuffer", filename, bytes);
+#endif
+    }
+
+    async Task TriggerTextDownload(string filename, string text, string mimeType)
+    {
+#if ANDROID
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        await AndroidDownloadService.SaveFileAsync(filename, bytes, mimeType);
+#else
+        await JS.InvokeVoidAsync("MeshViewer.downloadFile", filename, text, mimeType);
+#endif
+    }
+
+    // ── Dropdown / filter helpers ────────────────────────────────────────────
+    void ToggleDropdown(string id)
+    {
+        activeDropdown = activeDropdown == id ? "" : id;
+        StateHasChanged();
+    }
+
+    void CloseAllDropdowns()
+    {
+        bool changed = false;
+        if (activeDropdown != "") { activeDropdown = ""; changed = true; }
+        if (_ctxVisible)          { _ctxVisible    = false; changed = true; }
+        if (changed) StateHasChanged();
+    }
+
+    void ToggleTypeFilter(string type)
+    {
+        if (hiddenTypes.Contains(type)) hiddenTypes.Remove(type); else hiddenTypes.Add(type);
+        _filterDirty = true;
+        StateHasChanged();
+    }
+
+    void SelectAllTypes() { hiddenTypes.Clear();                              _filterDirty = true; StateHasChanged(); }
+    void SelectNoTypes()  { hiddenTypes = new HashSet<string>(AvailableTypes); _filterDirty = true; StateHasChanged(); }
+
+    string SearchQuery
+    {
+        get => searchQuery;
+        set { if (searchQuery != value) { searchQuery = value; _filterDirty = true; } }
+    }
+
+    System.Threading.CancellationTokenSource? _searchCts;
+
+    async Task OnSearchInput(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString() ?? "";
+        _searchCts?.Cancel();
+        _searchCts = new System.Threading.CancellationTokenSource();
+        var token = _searchCts.Token;
+        try
+        {
+            await Task.Delay(500, token);
+        }
+        catch (TaskCanceledException) { return; }
+        SearchQuery = val;
+        _renderCount = 200;
+        await Task.Run(() =>
+        {
+            var dummy = FilteredAssets;
+        });
+        StateHasChanged();
+    }
+
+    async Task ShowFontToastIfNeeded()
+    {
+        int skipped = _registry.SkippedFontCount;
+        if (skipped == 0) return;
+        _toastCts?.Cancel();
+        _toastCts = new System.Threading.CancellationTokenSource();
+        var token = _toastCts.Token;
+        _toastMessage = $"{skipped} file{(skipped == 1 ? "" : "s")} ignored — reason: malformed fonts";
+        _toastVisible = true;
+        StateHasChanged();
+        try { await Task.Delay(2000, token); } catch (TaskCanceledException) { return; }
+        _toastVisible = false;
+        StateHasChanged();
+    }
+
+    // ── File picker ──────────────────────────────────────────────────────────
+    void ResetState()
+    {
+        _registry.Clear();
+        selectedDesc = null; inspectorFields = null; textureResult = null; meshResult = null;
+        hiddenTypes.Clear(); _filterDirty = true; error = "";
+        _loadDone = 0; _loadTotal = 0;
+    }
+
+    async Task PickFile()
+    {
+        activeDropdown = "";
+        try
+        {
+            loading = true;
+            ResetState();
+            StateHasChanged();
+
+            var result = await FilePicker.Default.PickAsync();
+            if (result == null) { loading = false; return; }
+
+            bundleFileName = result.FileName;
+            await Task.Run(() => _registry.ScanFile(result.FullPath, result.FileName));
+
+            _filterDirty = true;
+            bundleFileName = $"{_registry.Count} assets";
+            if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
+                error = $"0 assets loaded. Error: {_registry.ScanErrors[0]}";
+            await ShowFontToastIfNeeded();
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loading = false; StateHasChanged(); }
+    }
+
+    async Task PickFolder()
+    {
+        activeDropdown = "";
+        try
+        {
+            loading = true;
+            ResetState();
+            StateHasChanged();
+
+#if ANDROID
+            string? safUri = await AndroidFolderPicker.PickFolderAsync();
+            if (safUri == null) { loading = false; return; }
+
+            var folderName = System.IO.Path.GetFileName(safUri.TrimEnd('/')) is { Length: > 0 } n ? n : "folder";
+            bundleFileName = $"📁 {folderName}";
+            StateHasChanged();
+
+            List<(string DisplayName, string TempPath)> safFiles = new();
+            await Task.Run(() => safFiles = AndroidDownloadService.GetFilesFromSafUri(safUri));
+
+            _loadTotal = safFiles.Count;
+            StateHasChanged();
+
+            await Task.Run(async () =>
+            {
+                foreach (var (displayName, tmpPath) in safFiles)
+                {
+                    _registry.ScanFile(tmpPath, displayName, safUri: null);
+                    _loadDone++;
+                    if (_loadDone % 5 == 0)
+                        await InvokeAsync(StateHasChanged);
+                }
+            });
+#else
+            string? folderPath = null;
+#if WINDOWS
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                var picker = new global::Windows.Storage.Pickers.FolderPicker();
+                picker.SuggestedStartLocation = global::Windows.Storage.Pickers.PickerLocationId.Downloads;
+                picker.FileTypeFilter.Add("*");
+                var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(Application.Current!.Windows[0].Handler!.PlatformView);
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, hWnd);
+                var folder = await picker.PickSingleFolderAsync();
+                if (folder != null) folderPath = folder.Path;
+            });
+#endif
+            if (string.IsNullOrEmpty(folderPath)) { loading = false; return; }
+
+            bundleFileName = $"📁 {System.IO.Path.GetFileName(folderPath)}";
+            var files = Directory.GetFiles(folderPath);
+            _loadTotal = files.Length;
+            StateHasChanged();
+
+            await Task.Run(async () =>
+            {
+                foreach (var filePath in files)
+                {
+                    _registry.ScanFile(filePath, Path.GetFileName(filePath));
+                    _loadDone++;
+                    if (_loadDone % 5 == 0)
+                        await InvokeAsync(StateHasChanged);
+                }
+            });
+#endif
+            _filterDirty = true;
+            bundleFileName = $"{_registry.Count} assets · {bundleFileName}";
+            if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
+                error = $"0 assets loaded. First error: {_registry.ScanErrors[0]}";
+            else if (_registry.ScanErrors.Count > 0)
+                error = $"{_registry.ScanErrors.Count} file(s) skipped. First: {_registry.ScanErrors[0]}";
+            await ShowFontToastIfNeeded();
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loading = false; StateHasChanged(); }
+    }
+
+    // ── Asset selection (lazy: opens bundle file on first click) ─────────────
+    async Task SelectByIndex(int filteredIndex)
+    {
+        if (filteredIndex < 0 || filteredIndex >= FilteredAssets.Count) return;
+        var desc = FilteredAssets[filteredIndex];
+        await SelectDescriptor(desc);
+    }
+
+    async Task SelectDescriptor(AssetDescriptor desc)
+    {
+        selectedDesc = desc;
+        inspectorFields = null; textureResult = null; meshResult = null;
+        inspectorLoading = true; textureLoading = true; meshLoading = desc.Type == "Mesh";
+        StateHasChanged();
+
+        AssetTypeValueField? localFields = null;
+        TextureDecodeResult? localTex    = null;
+        MeshParseResult?     localMesh   = null;
+
+        try
+        {
+            var af = await _registry.GetLiveFileAsync(desc);
+            if (af == null) { inspectorLoading = false; textureLoading = false; meshLoading = false; return; }
+
+            await Task.Run(() =>
+            {
+                var info = af.file.AssetInfos.FirstOrDefault(a => a.PathId == desc.PathId);
+                if (info == null) return;
+
+                var mgr = _registry.GetOpenManager(desc.BundleSlot);
+                if (mgr == null) return;
+
+                localFields = mgr.GetBaseField(af, info);
+
+                if (desc.Type is "Texture2D" or "Sprite")
+                    localTex = DecodeTextureFields(localFields, af);
+                else if (desc.Type == "Mesh")
+                    localMesh = MeshParser.Parse(localFields, af, info);
+            });
+
+            inspectorFields = localFields;
+            textureResult   = localTex;
+            meshResult      = localMesh;
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { inspectorLoading = false; textureLoading = false; meshLoading = false; StateHasChanged(); }
+    }
+
+    // ── Context menu ────────────────────────────────────────────────────────
+    void ShowCtxByIndex((int Index, MouseEventArgs E) args)
+    {
+        if (args.Index < 0 || args.Index >= FilteredAssets.Count) return;
+        _ctxDesc = FilteredAssets[args.Index];
+        _ctxX = args.E.ClientX; _ctxY = args.E.ClientY;
+        _ctxVisible = true;
+        StateHasChanged();
+    }
+
+    void HideCtxMenu() { _ctxVisible = false; StateHasChanged(); }
+
+    async Task CopyCtxText(string text)
+    {
+        _ctxVisible = false;
+        await JS.InvokeVoidAsync("MeshViewer.copyText", text);
+    }
+
+    async Task ExportCtxAsset()
+    {
+        if (_ctxDesc == null) { HideCtxMenu(); return; }
+        var target = _ctxDesc.Value;
+        HideCtxMenu();
+        await SelectDescriptor(target);
+        await ExportSelected();
+    }
+
+    // ── Export: selected ────────────────────────────────────────────────────
+    async Task ExportSelected()
+    {
+        if (selectedDesc == null) return;
+        var d = selectedDesc.Value;
+        switch (d.Type)
+        {
+            case "Texture2D":
+            case "Sprite":
+                await ExportTexturePng(d, textureResult);
+                break;
+            case "Mesh":
+                await ExportMeshObj(d, meshResult);
+                break;
+            default:
+                await ExportAssetJson();
+                break;
+        }
+    }
+
+    // ── Export: all filtered as ZIP ─────────────────────────────────────────
+    async Task DownloadAllFiltered()
+    {
+        activeDropdown = "";
+        var list = FilteredAssets;
+        if (list.Count == 0) return;
+        try
+        {
+            var zipStream = new MemoryStream();
+            using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var desc in list)
+                {
+                    try
+                    {
+                        var af = await _registry.GetLiveFileAsync(desc);
+                        if (af == null) continue;
+                        var info = af.file.AssetInfos.FirstOrDefault(x => x.PathId == desc.PathId);
+                        if (info == null) continue;
+
+                        var mgr = _registry.GetOpenManager(desc.BundleSlot);
+                        if (mgr == null) continue;
+                        var fields = mgr.GetBaseField(af, info);
+
+                        string entryName;
+                        byte[]? bytes = null;
+                        string? text  = null;
+
+                        switch (desc.Type)
+                        {
+                            case "Texture2D":
+                            case "Sprite":
+                                var tr = DecodeTextureFields(fields, af);
+                                if (tr?.Success != true || tr.RgbaData == null) continue;
+                                bytes = EncodePng(tr.RgbaData, tr.Width, tr.Height);
+                                entryName = $"{SafeName(desc.Name.Length > 0 ? desc.Name : $"tex_{desc.PathId}")}.png";
+                                break;
+                            case "Mesh":
+                                var mr = MeshParser.Parse(fields, af, info);
+                                if (mr?.Success != true) continue;
+                                text = MeshExporter.ExportToObj(mr, desc.Name.Length > 0 ? desc.Name : "mesh");
+                                entryName = $"{SafeName(desc.Name.Length > 0 ? desc.Name : $"mesh_{desc.PathId}")}.obj";
+                                break;
+                            default:
+                                var data = new Dictionary<string, object?>
+                                {
+                                    ["Asset"]  = new { desc.PathId, desc.Type, desc.Name, desc.ByteSize },
+                                    ["Fields"] = FieldToJson(fields)
+                                };
+                                text = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+                                entryName = $"{SafeName(desc.Name.Length > 0 ? desc.Name : $"{desc.Type}_{desc.PathId}")}.json";
+                                break;
+                        }
+
+                        if (usedNames.Contains(entryName))
+                        {
+                            var stem = Path.GetFileNameWithoutExtension(entryName);
+                            var ext  = Path.GetExtension(entryName);
+                            entryName = $"{stem}_{desc.PathId}{ext}";
+                        }
+                        usedNames.Add(entryName);
+
+                        var ze = zip.CreateEntry(entryName);
+                        using var es = ze.Open();
+                        if (bytes != null) await es.WriteAsync(bytes);
+                        else if (text != null) { var tb = System.Text.Encoding.UTF8.GetBytes(text); await es.WriteAsync(tb); }
+                    }
+                    catch { /* skip failed asset */ }
+                }
+            }
+            zipStream.Position = 0;
+            var zipName = SafeName(Path.GetFileNameWithoutExtension(bundleFileName));
+            await TriggerDownload($"{zipName}_export.zip", zipStream.ToArray(), "application/zip");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Home] Bulk export failed: {ex.Message}");
+        }
+    }
+
+    async Task ExportTexturePng(AssetDescriptor desc, TextureDecodeResult? result)
+    {
+        if (result?.Success != true || result.RgbaData == null) return;
+        try
+        {
+            var png = EncodePng(result.RgbaData, result.Width, result.Height);
+            await TriggerDownload($"{SafeName(desc.Name.Length > 0 ? desc.Name : "texture")}.png", png, "image/png");
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Home] PNG export failed: {ex.Message}"); }
+    }
+
+    async Task ExportMeshObj(AssetDescriptor desc, MeshParseResult? result)
+    {
+        if (result == null) return;
+        try
+        {
+            var obj = MeshExporter.ExportToObj(result, desc.Name.Length > 0 ? desc.Name : "mesh");
+            await TriggerTextDownload($"{SafeName(desc.Name.Length > 0 ? desc.Name : "mesh")}.obj", obj, "model/obj");
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Home] Mesh OBJ export failed: {ex.Message}"); }
+    }
+
+    async Task ExportAssetJson()
+    {
+        if (selectedDesc == null || inspectorFields == null) return;
+        var d = selectedDesc.Value;
+        try
+        {
+            var safeName = SafeName(d.Name.Length > 0 ? d.Name : $"{d.Type}_{d.PathId}");
+            var data = new Dictionary<string, object?>
+            {
+                ["Asset"]  = new { d.PathId, d.Type, d.Name, d.ByteSize },
+                ["Fields"] = FieldToJson(inspectorFields)
+            };
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            await TriggerTextDownload($"{safeName}.json", json, "application/json");
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Home] JSON export failed: {ex.Message}"); }
+    }
+
+    // ── Texture decode ───────────────────────────────────────────────────────
+    TextureDecodeResult? DecodeTextureFields(AssetTypeValueField fields, AssetsFileInstance afInst)
+    {
+        try
+        {
+            int width  = fields["m_Width"]?.AsInt  ?? 0;
+            int height = fields["m_Height"]?.AsInt ?? 0;
+            int format = fields["m_TextureFormat"]?.AsInt ?? 0;
+            byte[]? imageData = fields["image data"]?.AsByteArray;
+
+            if (imageData == null || imageData.Length == 0)
+            {
+                var sd = fields["m_StreamData"];
+                if (sd != null)
+                {
+                    string sp = sd["path"]?.AsString ?? "";
+                    ulong  so = sd["offset"]?.AsULong ?? 0;
+                    uint   ss = sd["size"]?.AsUInt   ?? 0;
+                    if (!string.IsNullOrEmpty(sp) && ss > 0)
+                    {
+                        if (sp.StartsWith("archive:/")) sp = sp[9..];
+                        sp = Path.GetFileName(sp);
+                        var bi = afInst.parentBundle;
+                        if (bi != null)
+                        {
+                            var di = BundleHelper.GetDirInfo(bi.file, sp);
+                            if (di != null)
+                            {
+                                bi.file.DataReader.Position = di.Offset + (long)so;
+                                imageData = bi.file.DataReader.ReadBytes((int)ss);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (imageData == null || imageData.Length == 0)
+                return new TextureDecodeResult { Error = "No image data (texture may be stripped)" };
+
+            int af  = format;
+            int expectedRgba8 = ((width + 3) / 4) * ((height + 3) / 4) * 16;
+            if (format == 47 && imageData.Length >= expectedRgba8) { af = 49; }
+
+            try
+            {
+                var decoded = BareIronTextureDecoder.Decode(imageData, width, height, af);
+                return new TextureDecodeResult { RgbaData = decoded, Width = width, Height = height, FormatId = af, FormatName = GetFormatName(format), SwapRB = false };
+            }
+            catch (Exception decEx)
+            {
+                return new TextureDecodeResult { RgbaData = imageData, Width = width, Height = height, FormatId = format, FormatName = GetFormatName(format), SwapRB = false, Error = $"Decode failed: {decEx.Message}" };
+            }
+        }
+        catch (Exception ex) { return new TextureDecodeResult { Error = $"Error: {ex.Message}" }; }
+    }
+
+    // ── Field helpers ────────────────────────────────────────────────────────
+    static object? FieldToJson(AssetTypeValueField field)
+    {
+        if (field.TypeName == "Array")
+            return field.Children == null
+                ? new List<object?>()
+                : field.Children.Where(c => c.FieldName != "size").Select(c => FieldToJson(c)).ToList();
+        if (field.Children == null || field.Children.Count == 0)
+            return field.AsString;
+        var dict = new Dictionary<string, object?>();
+        foreach (var child in field.Children)
+        {
+            var key = child.FieldName;
+            if (dict.ContainsKey(key)) { int i = 1; while (dict.ContainsKey($"{key}_{i}")) i++; key = $"{key}_{i}"; }
+            dict[key] = FieldToJson(child);
+        }
+        return dict;
+    }
+
+    RenderFragment RenderFields(AssetTypeValueField field, int depth = 0) => builder =>
+    {
+        if (depth > 24) return;
+        if (field.Children == null || field.Children.Count == 0) return;
+
+        if (field.TypeName == "Array")
+        {
+            var items = field.Children.Where(c => c.FieldName != "size").ToList();
+            builder.OpenElement(0, "div");
+            builder.AddAttribute(1, "class", depth == 0 ? "field-tree" : "field-children");
+            for (int idx = 0; idx < items.Count; idx++)
+            {
+                var item = items[idx]; int i = idx;
+                builder.OpenElement(2, "div"); builder.AddAttribute(3, "class", "field-node");
+                builder.OpenElement(4, "div"); builder.AddAttribute(5, "class", "field-row");
+                builder.OpenElement(6, "span"); builder.AddAttribute(7, "class", "field-type"); builder.AddContent(8, item.TypeName); builder.CloseElement();
+                builder.OpenElement(9, "span"); builder.AddAttribute(10, "class", "field-name"); builder.AddContent(11, $"[{i}]"); builder.CloseElement();
+                if (item.Children == null || item.Children.Count == 0)
+                { builder.OpenElement(12, "span"); builder.AddAttribute(13, "class", "field-value"); builder.AddContent(14, item.AsString); builder.CloseElement(); }
+                builder.CloseElement();
+                if (item.Children != null && item.Children.Count > 0)
+                    builder.AddContent(15, RenderFields(item, depth + 1));
+                builder.CloseElement();
+            }
+            builder.CloseElement();
+            return;
+        }
+
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", depth == 0 ? "field-tree" : "field-children");
+        foreach (var child in field.Children)
+        {
+            builder.OpenElement(2, "div"); builder.AddAttribute(3, "class", "field-node");
+            builder.OpenElement(4, "div"); builder.AddAttribute(5, "class", "field-row");
+            builder.OpenElement(6, "span"); builder.AddAttribute(7, "class", "field-type"); builder.AddContent(8, child.TypeName); builder.CloseElement();
+            builder.OpenElement(9, "span"); builder.AddAttribute(10, "class", "field-name"); builder.AddContent(11, child.FieldName); builder.CloseElement();
+            if (child.TypeName == "Array")
+            {
+                var sizeChild = child.Children?.FirstOrDefault(c => c.FieldName == "size");
+                var count = sizeChild != null ? sizeChild.AsString : "0";
+                builder.OpenElement(12, "span"); builder.AddAttribute(13, "class", "field-value"); builder.AddContent(14, $"({count} items)"); builder.CloseElement();
+            }
+            else if (child.Children == null || child.Children.Count == 0)
+            { builder.OpenElement(12, "span"); builder.AddAttribute(13, "class", "field-value"); builder.AddContent(14, child.AsString); builder.CloseElement(); }
+            else if (child.Children.Count > 0 && child.Children[0].FieldName == "size")
+            {
+                var sizeChild = child.Children.FirstOrDefault(c => c.FieldName == "size");
+                builder.OpenElement(12, "span"); builder.AddAttribute(13, "class", "field-value"); builder.AddContent(14, $"({(sizeChild?.AsString ?? "?")} items)"); builder.CloseElement();
+            }
+            builder.CloseElement();
+            if (child.Children != null && child.Children.Count > 0)
+                builder.AddContent(15, RenderFields(child, depth + 1));
+            builder.CloseElement();
+        }
+        builder.CloseElement();
+    };
+
+    // ── Static utilities ─────────────────────────────────────────────────────
+    static string SafeName(string name) => name.Replace("/","_").Replace("\\","_").Replace(" ","_");
+    static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)         return $"{bytes}B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1}K";
+        return $"{bytes / (1024.0 * 1024):F1}M";
+    }
+
+    static string GetTypeColor(string type) => type switch
+    {
+        "Texture2D"     => "#4ec9b0", "Sprite"        => "#c586c0",
+        "AudioClip"     => "#f0a500", "TextAsset"     => "#9cdcfe",
+        "Mesh"          => "#ce9178", "Material"      => "#569cd6",
+        "MonoBehaviour" => "#4af626", "GameObject"    => "#dcdcaa",
+        "Transform"     => "#888888", "Animator"      => "#f48771",
+        "AnimationClip" => "#f48771", "Shader"        => "#d7ba7d",
+        _               => "#666666"
+    };
+
+    static string GetFormatName(int format) => format switch
+    {
+        3 => "RGB24", 4 => "RGBA32", 5 => "ARGB32", 7 => "DXT1", 10 => "DXT5",
+        13 => "BGRA32", 34 => "BC6H", 45 => "ETC_RGB4", 46 => "ETC_RGB4_3DS",
+        47 => "ETC2_RGB4", 48 => "ETC2_RGBA1", 49 => "ETC2_RGBA8",
+        52 => "BC4", 53 => "BC5", 54 => "BC6H_2", 55 => "BC7",
+        62 => "BC4_2", 63 => "BC5_2", 74 => "ASTC_4x4", 77 => "ASTC_8x8",
+        _ => "UNKNOWN"
+    };
+
+    static byte[] EncodePng(byte[] rgba, int width, int height)
+    {
+        using var file = new MemoryStream();
+        file.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+        WritePngChunk(file, "IHDR", w =>
+        {
+            WritePngU32BE(w, (uint)width); WritePngU32BE(w, (uint)height);
+            w.WriteByte(8); w.WriteByte(6); w.WriteByte(0); w.WriteByte(0); w.WriteByte(0);
+        });
+        using var scanlines = new MemoryStream();
+        using (var zlib = new ZLibStream(scanlines, CompressionLevel.Fastest, leaveOpen: true))
+        {
+            int stride = width * 4;
+            for (int y = 0; y < height; y++) { zlib.WriteByte(0); zlib.Write(rgba, y * stride, stride); }
+        }
+        WritePngChunk(file, "IDAT", w => w.Write(scanlines.ToArray()));
+        WritePngChunk(file, "IEND", _ => { });
+        return file.ToArray();
+    }
+
+    static void WritePngChunk(Stream dest, string type, Action<Stream> writeData)
+    {
+        using var body = new MemoryStream();
+        body.Write(System.Text.Encoding.ASCII.GetBytes(type));
+        writeData(body);
+        var bodyArr = body.ToArray();
+        var dataOnly = bodyArr[4..];
+        WritePngU32BE(dest, (uint)dataOnly.Length);
+        dest.Write(bodyArr);
+        WritePngU32BE(dest, PngCrc32(bodyArr));
+    }
+
+    static void WritePngU32BE(Stream s, uint v)
+    {
+        s.WriteByte((byte)(v >> 24)); s.WriteByte((byte)(v >> 16));
+        s.WriteByte((byte)(v >> 8));  s.WriteByte((byte)v);
+    }
+
+    static uint PngCrc32(byte[] data)
+    {
+        uint crc = 0xFFFFFFFF;
+        foreach (byte b in data) { crc ^= b; for (int i = 0; i < 8; i++) crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320 : crc >> 1; }
+        return crc ^ 0xFFFFFFFF;
+    }
+
+    DotNetObjectReference<Home>? _selfRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("LazyList.attach", _selfRef, "bi-table-wrap");
+            await JS.InvokeVoidAsync("PanelResize.init");
+        }
+    }
+
+    bool _loadingMore = false;
+
+    [JSInvokable]
+    public void OnNearBottom()
+    {
+        if (_loadingMore) return;
+        var total = FilteredAssets.Count;
+        if (_renderCount >= total) return;
+        _loadingMore = true;
+        _renderCount = Math.Min(_renderCount + 100, total);
+        _loadingMore = false;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _selfRef?.Dispose();
+        _registry.Dispose();
+        _toastCts?.Cancel();
+    }
+}

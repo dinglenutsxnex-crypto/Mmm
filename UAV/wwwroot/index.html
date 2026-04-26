@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>UAV</title>
+    <base href="/">
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="app.css">
+    <link rel="stylesheet" href="UAV.styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="icon" href="data:,">
+    <style>
+        html, body {
+            background-color: #1e1e1e;
+        }
+
+        #app {
+            background-color: #1e1e1e;
+            min-height: 100vh;
+        }
+
+        #splash-screen {
+            background-color: #1e1e1e;
+            color: white;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            font-size: 1rem;
+            padding: 1rem;
+            text-transform: lowercase;
+        }
+
+        .status-bar-safe-area {
+            display: none;
+        }
+
+        @supports (-webkit-touch-callout: none) {
+            .status-bar-safe-area {
+                display: flex;
+                position: sticky;
+                top: 0;
+                height: env(safe-area-inset-top);
+                background-color: #1e1e1e;
+                width: 100%;
+                z-index: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="status-bar-safe-area"></div>
+    <div id="splash-screen">Loading...</div>
+    <div id="app"></div>
+    <div id="blazor-error-ui" data-nosnippet>
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+    <script src="_framework/blazor.webview.js" autostart="false"></script>
+    <script src="meshviewer.js"></script>
+    <script>
+        // Virtual table scroll bridge
+        // Uses requestAnimationFrame to throttle — only one C# call per paint frame.
+        // Without this, fast flings fire dozens of scroll events per frame and each one
+        // triggers a full Blazor StateHasChanged + diff, causing the runaway scroll feel.
+        window.VirtualTable = {
+            _observers: {},
+            attach: function (dotnetRef, containerId) {
+                const el = document.getElementById(containerId);
+                if (!el) return;
+
+                let rafPending = false;
+                let lastScrollTop = -1;
+                let suppressNext = false;
+
+                function onScroll() {
+                    if (suppressNext) { suppressNext = false; return; }
+                    if (rafPending) return;
+                    rafPending = true;
+                    requestAnimationFrame(function () {
+                        rafPending = false;
+                        const st = el.scrollTop;
+                        if (st === lastScrollTop) return;
+                        lastScrollTop = st;
+                        dotnetRef.invokeMethodAsync('NotifyScroll', st, el.clientHeight);
+                    });
+                }
+
+                el.addEventListener('scroll', onScroll, { passive: true });
+                dotnetRef.invokeMethodAsync('NotifyScroll', el.scrollTop, el.clientHeight);
+
+                window.VirtualTable._observers[containerId] = { el, onScroll, dotnetRef, suppress: () => { suppressNext = true; } };
+            },
+            detach: function (containerId) {
+                const o = window.VirtualTable._observers[containerId];
+                if (!o) return;
+                o.el.removeEventListener('scroll', o.onScroll);
+                delete window.VirtualTable._observers[containerId];
+            },
+            scrollToIndex: function (containerId, index, rowHeight) {
+                const el = document.getElementById(containerId);
+                if (!el) return;
+                const itemTop = index * rowHeight;
+                const itemBot = itemTop + rowHeight;
+                if (itemTop < el.scrollTop) el.scrollTop = itemTop;
+                else if (itemBot > el.scrollTop + el.clientHeight)
+                    el.scrollTop = itemBot - el.clientHeight;
+            },
+            restoreScroll: function (containerId, scrollTop) {
+                const o = window.VirtualTable._observers[containerId];
+                if (!o) return;
+                if (o.el.scrollTop !== scrollTop) {
+                    o.suppress();
+                    o.el.scrollTop = scrollTop;
+                }
+            }
+        };
+
+        window.PanelResize = {
+            _bound: false,
+            _resizeObs: null,
+            _mutObs: null,
+            _contentObs: null,
+
+            // Recalculate col-name / col-pathid widths based on current panel width
+            // and which columns are currently visible.
+            //
+            // Layout budget:
+            //   usable = panelWidth - 8 (scrollbar) - 110 (type) - [65 (size) if visible]
+            //
+            // When pathid is visible the usable space is split:
+            //   name  → min(NAME_MAX, 62 % of usable)   — hard cap at ~37 chars
+            //   pathid → remainder (min 55 px)
+            //
+            // When pathid is hidden name gets all the usable space (no cap needed).
+            updateTableCols: function () {
+                const panel = document.querySelector('.bi-assets-panel');
+                const table = document.querySelector('.bi-table');
+                if (!panel || !table) return;
+
+                var panelW   = panel.offsetWidth;
+                var TYPE_W   = 110;
+                var SIZE_W   = 65;
+                var SCROLL_W = 8;
+                var NAME_MAX = 259; // ≈ 37 chars × 7 px  (Segoe UI 12 px)
+
+                var sizeHeader = table.querySelector('th.col-size');
+                var pathHeader = table.querySelector('th.col-pathid');
+
+                var sizeHidden = !sizeHeader || sizeHeader.classList.contains('col-hidden');
+                var pathHidden = !pathHeader || pathHeader.classList.contains('col-hidden');
+
+                var usable = Math.max(60, panelW - SCROLL_W - TYPE_W - (sizeHidden ? 0 : SIZE_W));
+
+                if (!pathHidden) {
+                    var nameW = Math.min(NAME_MAX, Math.round(usable * 0.62));
+                    var pathW = Math.max(55, usable - nameW);
+                    table.style.setProperty('--col-name-w',   nameW + 'px');
+                    table.style.setProperty('--col-pathid-w', pathW + 'px');
+                } else {
+                    // pathid hidden — name takes everything, no artificial cap
+                    table.style.removeProperty('--col-name-w');
+                    table.style.removeProperty('--col-pathid-w');
+                }
+            },
+
+            // Wire up observers so column widths stay correct after:
+            //   • panel drag-resize
+            //   • View-menu toggles (adds/removes col-hidden class)
+            //   • File load (table appears for the first time)
+            setupObservers: function () {
+                var PR = window.PanelResize;
+
+                // ResizeObserver: reacts to panel width changes (includes drag)
+                if (window.ResizeObserver && !PR._resizeObs) {
+                    var panel = document.querySelector('.bi-assets-panel');
+                    if (panel) {
+                        PR._resizeObs = new ResizeObserver(function () { PR.updateTableCols(); });
+                        PR._resizeObs.observe(panel);
+                    }
+                }
+
+                // MutationObserver: reacts to col-hidden class being toggled on <th>
+                if (window.MutationObserver && !PR._mutObs) {
+                    var table = document.querySelector('.bi-table');
+                    if (table) {
+                        PR._mutObs = new MutationObserver(function () { PR.updateTableCols(); });
+                        PR._mutObs.observe(table, { subtree: true, attributes: true, attributeFilter: ['class'] });
+                    }
+                }
+
+                // MutationObserver: reacts to the table being inserted when a file is loaded
+                if (window.MutationObserver && !PR._contentObs) {
+                    var wrap = document.getElementById('bi-table-wrap');
+                    if (wrap) {
+                        PR._contentObs = new MutationObserver(function () {
+                            // Re-attach _mutObs to newly-rendered table if needed
+                            if (!PR._mutObs) {
+                                var t = document.querySelector('.bi-table');
+                                if (t) {
+                                    PR._mutObs = new MutationObserver(function () { PR.updateTableCols(); });
+                                    PR._mutObs.observe(t, { subtree: true, attributes: true, attributeFilter: ['class'] });
+                                }
+                            }
+                            PR.updateTableCols();
+                        });
+                        PR._contentObs.observe(wrap, { childList: true });
+                    }
+                }
+
+                PR.updateTableCols();
+            },
+
+            init: function () {
+                if (window.PanelResize._bound) return;
+                const drag = document.getElementById('bi-drag');
+                if (!drag) return;
+                window.PanelResize._bound = true;
+
+                var PR = window.PanelResize;
+                let dragging = false;
+                let startX = 0;
+                let startW = 0;
+
+                PR.setupObservers();
+
+                drag.addEventListener('mousedown', function (e) {
+                    e.preventDefault();
+                    const panel = document.querySelector('.bi-assets-panel');
+                    if (!panel) return;
+                    dragging = true;
+                    startX = e.clientX;
+                    startW = panel.offsetWidth;
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                });
+
+                document.addEventListener('mousemove', function (e) {
+                    if (!dragging) return;
+                    const panel = document.querySelector('.bi-assets-panel');
+                    if (!panel) return;
+                    const newW = Math.max(150, Math.min(startW + (e.clientX - startX), window.innerWidth - 200));
+                    panel.style.width = newW + 'px';
+                    panel.style.flexShrink = '0';
+                    PR.updateTableCols();
+                });
+
+                document.addEventListener('mouseup', function () {
+                    dragging = false;
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                });
+
+                drag.addEventListener('touchstart', function (e) {
+                    e.preventDefault();
+                    const panel = document.querySelector('.bi-assets-panel');
+                    if (!panel) return;
+                    dragging = true;
+                    startX = e.touches[0].clientX;
+                    startW = panel.offsetWidth;
+                }, { passive: false });
+
+                document.addEventListener('touchmove', function (e) {
+                    if (!dragging) return;
+                    e.preventDefault();
+                    const panel = document.querySelector('.bi-assets-panel');
+                    if (!panel) return;
+                    const newW = Math.max(150, Math.min(startW + (e.touches[0].clientX - startX), window.innerWidth - 200));
+                    panel.style.width = newW + 'px';
+                    panel.style.flexShrink = '0';
+                    PR.updateTableCols();
+                }, { passive: false });
+
+                document.addEventListener('touchend', function () {
+                    dragging = false;
+                });
+            },
+            tryInit: function () {
+                if (document.getElementById('bi-drag')) {
+                    window.PanelResize.init();
+                } else {
+                    setTimeout(window.PanelResize.tryInit, 200);
+                }
+            }
+        };
+
+        document.addEventListener('blazor:initialized', function () { window.PanelResize.tryInit(); });
+
+        window.LazyList = {
+            attach: function (dotnetRef, containerId) {
+                const el = document.getElementById(containerId);
+                if (!el) return;
+                let pending = false;
+                el.addEventListener('scroll', function () {
+                    if (pending) return;
+                    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 300) {
+                        pending = true;
+                        dotnetRef.invokeMethodAsync('OnNearBottom').then(function () {
+                            setTimeout(function () { pending = false; }, 150);
+                        });
+                    }
+                }, { passive: true });
+            }
+        };
+    </script>
+    <script>
+        (function () {
+            const words = ['loading...', 'gooning...', 'building...', 'initializing...', 'mewing...', 'finishing...', 'summoning demons...', 'herding cats...', 'brewing coffee...', 'polishing pixels...', 'untangling wires...', 'convincing ai...', 'counting electrons...', 'buffering vibes...', 'sacrificing a goat...', 'aligning chakras...', 'downloading more ram...', 'compiling bad decisions...', 'generating witty text...', 'petting the hamster...', 'rebooting reality...', 'defragmenting vibes...', 'sharpening pencils...', 'making excuses...', 'calibrating sarcasm...', 'moisturizing...', 'yeeting errors...', 'vibing...'];
+            const randomWord = words[Math.floor(Math.random() * words.length)];
+            const splash = document.getElementById('splash-screen');
+            if (splash) splash.textContent = randomWord;
+
+            function hideSplash() {
+                const el = document.getElementById('splash-screen');
+                if (el) el.style.display = 'none';
+            }
+
+            document.addEventListener('blazor:initialized', hideSplash);
+
+            const app = document.getElementById('app');
+            if (app) {
+                const observer = new MutationObserver(function (mutations) {
+                    if (app.children.length > 0 || app.textContent.trim() !== '') {
+                        hideSplash();
+                        observer.disconnect();
+                    }
+                });
+                observer.observe(app, { childList: true, subtree: true });
+            }
+
+            setTimeout(hideSplash, 5000);
+        })();
+    </script>
+</body>
+</html>
