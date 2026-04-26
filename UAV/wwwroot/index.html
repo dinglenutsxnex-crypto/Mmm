@@ -70,10 +70,13 @@
 
                 let rafPending = false;
                 let lastScrollTop = -1;
-                let suppressNext = false;
+                // suppressCount: each restoreScroll call increments this; each suppressed
+                // scroll event decrements it. Using a counter (not a bool) means two rapid
+                // restoreScroll calls don't leave a dangling flag that swallows a real scroll.
+                const obs = { el, onScroll: null, dotnetRef, suppressCount: 0 };
 
                 function onScroll() {
-                    if (suppressNext) { suppressNext = false; return; }
+                    if (obs.suppressCount > 0) { obs.suppressCount--; return; }
                     if (rafPending) return;
                     rafPending = true;
                     requestAnimationFrame(function () {
@@ -85,10 +88,11 @@
                     });
                 }
 
+                obs.onScroll = onScroll;
                 el.addEventListener('scroll', onScroll, { passive: true });
                 dotnetRef.invokeMethodAsync('NotifyScroll', el.scrollTop, el.clientHeight, el.scrollHeight, performance.now());
 
-                window.VirtualTable._observers[containerId] = { el, onScroll, dotnetRef, suppress: () => { suppressNext = true; } };
+                window.VirtualTable._observers[containerId] = obs;
             },
             detach: function (containerId) {
                 const o = window.VirtualTable._observers[containerId];
@@ -108,8 +112,11 @@
             restoreScroll: function (containerId, scrollTop) {
                 const o = window.VirtualTable._observers[containerId];
                 if (!o) return;
-                if (o.el.scrollTop !== scrollTop) {
-                    o.suppress();
+                // Only restore if scroll has actually drifted after a Blazor re-render.
+                // Use a suppressCount (not a boolean) so rapid consecutive calls don't
+                // leak a stale flag that silently eats the next real user scroll event.
+                if (Math.abs(o.el.scrollTop - scrollTop) > 1) {
+                    o.suppressCount = (o.suppressCount || 0) + 1;
                     o.el.scrollTop = scrollTop;
                 }
             }

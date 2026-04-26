@@ -155,7 +155,7 @@
 
     // ── JS-invokable scroll callback ──────────────────────────────────────────
     [JSInvokable]
-    public void NotifyScroll(double scrollTop, double viewportHeight)
+    public void NotifyScroll(double scrollTop, double viewportHeight, double scrollHeight, double timestamp)
     {
         _viewportH = (int)viewportHeight;
         _lastScrollTop = (int)scrollTop;
