@@ -1837,9 +1837,9 @@
             int oldStart = _winStart;
             _winEnd   = Math.Min(total, _winEnd + TRIGGER);
             _winStart = Math.Max(0, _winEnd - BUF * 2);
-            // If winStart moved forward, the top spacer grew by that many pixels.
-            // We must scroll DOWN by the same amount after render to stay put.
-            _pendingScrollDelta += (_winStart - oldStart) * ROW_H;
+            // Top spacer grew by (winStart - oldStart) * ROW_H pixels.
+            // Browser auto-scrolled us DOWN by that amount — cancel it by scrolling UP (negative).
+            _pendingScrollDelta += (oldStart - _winStart) * ROW_H;
             InvokeAsync(StateHasChanged);
             return;
         }
@@ -1850,8 +1850,8 @@
             int oldStart = _winStart;
             _winStart = Math.Max(0, _winStart - TRIGGER);
             _winEnd   = Math.Min(total, _winStart + BUF * 2);
-            // If winStart moved back, the top spacer shrank — scroll UP to compensate.
-            _pendingScrollDelta += (_winStart - oldStart) * ROW_H;
+            // Top spacer shrank — browser scrolled us UP — cancel it by scrolling DOWN (positive).
+            _pendingScrollDelta += (oldStart - _winStart) * ROW_H;
             InvokeAsync(StateHasChanged);
         }
     }
