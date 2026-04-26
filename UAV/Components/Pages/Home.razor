@@ -1231,15 +1231,15 @@
             _loadTotal = safFiles.Count;
             StateHasChanged();
 
-            await Task.Run(async () =>
+            var androidFileList = safFiles
+                .Select(f => (FilePath: f.DisplayName, DisplayName: f.DisplayName, SafUri: (string?)f.DocumentUri))
+                .ToList();
+
+            await _registry.ScanAllAsync(androidFileList, batchDone =>
             {
-                foreach (var (displayName, documentUri) in safFiles)
-                {
-                    _registry.ScanFile(displayName, displayName, safUri: documentUri);
-                    _loadDone++;
-                    if (_loadDone % 5 == 0)
-                        await InvokeAsync(StateHasChanged);
-                }
+                _loadDone += batchDone;
+                if (_loadDone % 5 == 0)
+                    InvokeAsync(StateHasChanged);
             });
 #else
             string? folderPath = null;
@@ -1262,15 +1262,15 @@
             _loadTotal = files.Length;
             StateHasChanged();
 
-            await Task.Run(async () =>
+            var windowsFileList = files
+                .Select(f => (FilePath: f, DisplayName: Path.GetFileName(f), SafUri: (string?)null))
+                .ToList();
+
+            await _registry.ScanAllAsync(windowsFileList, batchDone =>
             {
-                foreach (var filePath in files)
-                {
-                    _registry.ScanFile(filePath, Path.GetFileName(filePath));
-                    _loadDone++;
-                    if (_loadDone % 5 == 0)
-                        await InvokeAsync(StateHasChanged);
-                }
+                _loadDone += batchDone;
+                if (_loadDone % 5 == 0)
+                    InvokeAsync(StateHasChanged);
             });
 #endif
             _filterDirty = true;

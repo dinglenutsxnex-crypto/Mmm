@@ -1,4 +1,4 @@
-@* VirtualTable.razor — renders only visible rows + 50 buffer each side.
+@* VirtualTable.razor — renders only visible rows + 100 buffer each side.
    Uses fixed 28px row height — zero DOM measurement needed.
    JS bridge fires NotifyScroll(scrollTop, viewportHeight) on scroll. *@
 
@@ -96,7 +96,7 @@
 
     // ── Constants ─────────────────────────────────────────────────────────────
     private const int RowHeight = 28;
-    private const int Buffer    = 50;
+    private const int Buffer    = 100;
 
     // ── State ─────────────────────────────────────────────────────────────────
     private readonly string _containerId = $"vt-{Guid.NewGuid():N}";

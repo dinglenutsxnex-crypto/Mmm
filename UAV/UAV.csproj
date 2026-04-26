@@ -63,4 +63,10 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
     </ItemGroup>
 
+
+  <ItemGroup>
+    <!-- Remove old renamed file if it exists in repo -->
+    <Compile Remove="Services\BareIronTextureDecoder.cs" />
+  </ItemGroup>
+
 </Project>
