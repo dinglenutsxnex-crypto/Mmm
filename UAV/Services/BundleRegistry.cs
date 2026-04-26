@@ -61,21 +61,30 @@ internal sealed class BundleSlot
         {
             if (OpenManager == null)
             {
-                string path = FilePath;
 #if ANDROID
-                if (!File.Exists(path) && SafUri != null)
+                if (SafUri != null)
                 {
-                    path     = await Task.Run(() => ReCopyFromSaf(SafUri));
-                    FilePath = path;
+                    OpenManager = new AssetsManager();
+                    using var stream = AndroidDownloadService.OpenSafStream(SafUri);
+                    var bundle = OpenManager.LoadBundleFile(stream, FilePath);
+                    int count  = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
+                    OpenFiles  = new AssetsFileInstance?[count];
+                    for (int i = 0; i < count; i++)
+                    {
+                        try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundle, i); }
+                        catch { }
+                    }
+                    return subFileIndex >= 0 && subFileIndex < OpenFiles.Length
+                        ? OpenFiles[subFileIndex] : null;
                 }
 #endif
                 OpenManager = new AssetsManager();
-                var bundle  = OpenManager.LoadBundleFile(path);
-                int count   = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
-                OpenFiles   = new AssetsFileInstance?[count];
-                for (int i = 0; i < count; i++)
+                var bundleFile = OpenManager.LoadBundleFile(FilePath);
+                int fileCount  = bundleFile.file.BlockAndDirInfo.DirectoryInfos.Count;
+                OpenFiles      = new AssetsFileInstance?[fileCount];
+                for (int i = 0; i < fileCount; i++)
                 {
-                    try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundle, i); }
+                    try { OpenFiles[i] = OpenManager.LoadAssetsFileFromBundle(bundleFile, i); }
                     catch { }
                 }
             }
@@ -91,22 +100,16 @@ internal sealed class BundleSlot
         try { OpenFiles = Array.Empty<AssetsFileInstance?>(); OpenManager = null; }
         finally { _lock.Release(); }
     }
+}
 
-#if ANDROID
-    private static int _reCopyCounter;
-    private static string ReCopyFromSaf(string safUri)
+internal static class FontTypeGuard
+{
+    private static readonly HashSet<string> BlockedTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        var uri      = Android.Net.Uri.Parse(safUri)!;
-        var resolver = Android.App.Application.Context.ContentResolver!;
-        var idx      = Interlocked.Increment(ref _reCopyCounter);
-        var tmp      = Path.Combine(
-            Android.App.Application.Context.CacheDir!.AbsolutePath, $"saf_{idx}");
-        using var ins  = resolver.OpenInputStream(uri)!;
-        using var outs = File.Create(tmp);
-        ins.CopyTo(outs);
-        return tmp;
-    }
-#endif
+        "Font", "TMP_FontAsset", "TMP_SpriteAsset", "TextMeshProFont", "FontDef", "GUISkin",
+    };
+
+    public static bool IsBlocked(string typeName) => BlockedTypes.Contains(typeName);
 }
 
 /// <summary>
@@ -122,7 +125,7 @@ public sealed class BundleRegistry : IDisposable
     public ReadOnlySpan<AssetDescriptor> All   => _descriptors.AsSpan(0, _count);
     public int                           Count => _count;
     public List<string> ScanErrors { get; } = new();
-    public int SkippedFontCount { get; private set; } = 0;
+    public List<string> SkippedFontBundles { get; } = new();
 
     public void Clear()
     {
@@ -131,7 +134,7 @@ public sealed class BundleRegistry : IDisposable
         _descriptors = Array.Empty<AssetDescriptor>();
         _count = 0;
         ScanErrors.Clear();
-        SkippedFontCount = 0;
+        SkippedFontBundles.Clear();
     }
 
     /// <summary>
@@ -141,12 +144,6 @@ public sealed class BundleRegistry : IDisposable
     /// </summary>
     public void ScanFile(string filePath, string displayName, string? safUri = null)
     {
-        if (IsFontFile(filePath))
-        {
-            SkippedFontCount++;
-            return;
-        }
-
         int slotIndex   = _slots.Count;
         int countBefore = _count;
 
@@ -156,19 +153,59 @@ public sealed class BundleRegistry : IDisposable
             bool any = false;
             try
             {
-                var bundle = mgr.LoadBundleFile(filePath);
-                var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
-                for (int i = 0; i < dirs.Count; i++)
+#if ANDROID
+                if (safUri != null)
                 {
-                    try
+                    using var stream = AndroidDownloadService.OpenSafStream(safUri);
+                    var bundle = mgr.LoadBundleFile(stream, filePath);
+                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                    for (int i = 0; i < dirs.Count; i++)
                     {
-                        var af = mgr.LoadAssetsFileFromBundle(bundle, i);
-                        if (af?.file?.AssetInfos == null) continue;
-                        ScanSubFile(af, mgr, slotIndex, i);
-                        any = true;
+                        try
+                        {
+                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                            if (af?.file?.AssetInfos == null) continue;
+                            ScanSubFile(af, mgr, slotIndex, i);
+                            any = true;
+                        }
+                        catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
+                        {
+                            _count = countBefore;
+                            SkippedFontBundles.Add(displayName);
+                            return;
+                        }
+                        catch { }
                     }
-                    catch { }
                 }
+                else
+#endif
+                {
+                    var bundle = mgr.LoadBundleFile(filePath);
+                    var dirs   = bundle.file.BlockAndDirInfo.DirectoryInfos;
+                    for (int i = 0; i < dirs.Count; i++)
+                    {
+                        try
+                        {
+                            var af = mgr.LoadAssetsFileFromBundle(bundle, i);
+                            if (af?.file?.AssetInfos == null) continue;
+                            ScanSubFile(af, mgr, slotIndex, i);
+                            any = true;
+                        }
+                        catch (InvalidOperationException ioe) when (ioe.Message.StartsWith("FONT_BUNDLE:"))
+                        {
+                            _count = countBefore;
+                            SkippedFontBundles.Add(displayName);
+                            return;
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch (InvalidOperationException fontEx) when (fontEx.Message.StartsWith("FONT_BUNDLE:"))
+            {
+                _count = countBefore;
+                SkippedFontBundles.Add(displayName);
+                return;
             }
             catch (Exception bundleEx)
             {
@@ -180,6 +217,12 @@ public sealed class BundleRegistry : IDisposable
                         ScanSubFile(af, mgr, slotIndex, 0);
                         any = true;
                     }
+                }
+                catch (InvalidOperationException fontEx2) when (fontEx2.Message.StartsWith("FONT_BUNDLE:"))
+                {
+                    _count = countBefore;
+                    SkippedFontBundles.Add(displayName);
+                    return;
                 }
                 catch (Exception assetsEx)
                 {
@@ -241,6 +284,9 @@ public sealed class BundleRegistry : IDisposable
                 catch { tc = ("Unknown", false); }
                 typeCache[info.TypeId] = tc;
             }
+
+            if (FontTypeGuard.IsBlocked(tc.TypeName))
+                throw new InvalidOperationException("FONT_BUNDLE:" + tc.TypeName);
             type    = tc.TypeName;
             hasName = tc.HasName;
 
@@ -282,32 +328,6 @@ public sealed class BundleRegistry : IDisposable
         if (needed <= _descriptors.Length) return;
         int newSize = Math.Max(needed, Math.Max(1024, _descriptors.Length * 2));
         Array.Resize(ref _descriptors, newSize);
-    }
-
-    private static bool IsFontFile(string filePath)
-    {
-        var ext = Path.GetExtension(filePath);
-        if (string.Equals(ext, ".ttf",  StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(ext, ".otf",  StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(ext, ".woff", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(ext, ".woff2",StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        try
-        {
-            if (!File.Exists(filePath)) return false;
-            Span<byte> magic = stackalloc byte[4];
-            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (fs.Read(magic) < 4) return false;
-            // TTF/OTF: starts with 0x00010000 or "OTTO"
-            if (magic[0] == 0x00 && magic[1] == 0x01 && magic[2] == 0x00 && magic[3] == 0x00) return true;
-            if (magic[0] == 'O'  && magic[1] == 'T'  && magic[2] == 'T'  && magic[3] == 'O')  return true;
-            // wOFF / wOF2
-            if (magic[0] == 'w'  && magic[1] == 'O'  && magic[2] == 'F'  && magic[3] == 'F')  return true;
-        }
-        catch { }
-
-        return false;
     }
 
     public void Dispose() => Clear();

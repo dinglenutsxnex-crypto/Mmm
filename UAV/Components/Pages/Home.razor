@@ -761,12 +761,12 @@
         color: #f48771;
         padding: 10px 16px;
         border-radius: 4px;
-        font-size: 13px;
-        font-family: 'Segoe UI', sans-serif;
+        font-size: 12px;
+        font-family: 'Consolas', monospace;
         z-index: 9999;
         box-shadow: 0 4px 14px rgba(0,0,0,0.5);
         animation: toast-in 0.2s ease;
-        pointer-events: none;
+        cursor: pointer;
     }
 
     @@keyframes toast-in {
@@ -1006,9 +1006,9 @@
         </div>
     }
 
-    @if (_toastVisible)
+    @if (_toastMessage != null)
     {
-        <div class="bi-toast">⚠ @_toastMessage</div>
+        <div class="bi-toast" @onclick="@(() => _toastMessage = null)">⚠ @_toastMessage</div>
     }
 
 </div>
@@ -1080,9 +1080,7 @@
     double _ctxX, _ctxY;
 
     // Toast
-    bool _toastVisible = false;
-    string _toastMessage = "";
-    System.Threading.CancellationTokenSource? _toastCts;
+    string? _toastMessage = null;
 
     // Inspector results
     AssetTypeValueField? inspectorFields;
@@ -1169,19 +1167,11 @@
         StateHasChanged();
     }
 
-    async Task ShowFontToastIfNeeded()
+    void ShowFontToastIfNeeded()
     {
-        int skipped = _registry.SkippedFontCount;
-        if (skipped == 0) return;
-        _toastCts?.Cancel();
-        _toastCts = new System.Threading.CancellationTokenSource();
-        var token = _toastCts.Token;
-        _toastMessage = $"{skipped} file{(skipped == 1 ? "" : "s")} ignored — reason: malformed fonts";
-        _toastVisible = true;
-        StateHasChanged();
-        try { await Task.Delay(2000, token); } catch (TaskCanceledException) { return; }
-        _toastVisible = false;
-        StateHasChanged();
+        var n = _registry.SkippedFontBundles.Count;
+        if (n == 0) return;
+        _toastMessage = $"{n} font bundle{(n == 1 ? "" : "s")} skipped — crash prevention.";
     }
 
     // ── File picker ──────────────────────────────────────────────────────────
@@ -1189,7 +1179,7 @@
     {
         _registry.Clear();
         selectedDesc = null; inspectorFields = null; textureResult = null; meshResult = null;
-        hiddenTypes.Clear(); _filterDirty = true; error = "";
+        hiddenTypes.Clear(); _filterDirty = true; error = ""; _toastMessage = null;
         _loadDone = 0; _loadTotal = 0;
     }
 
@@ -1212,7 +1202,7 @@
             bundleFileName = $"{_registry.Count} assets";
             if (_registry.ScanErrors.Count > 0 && _registry.Count == 0)
                 error = $"0 assets loaded. Error: {_registry.ScanErrors[0]}";
-            await ShowFontToastIfNeeded();
+            ShowFontToastIfNeeded();
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }
@@ -1289,7 +1279,7 @@
                 error = $"0 assets loaded. First error: {_registry.ScanErrors[0]}";
             else if (_registry.ScanErrors.Count > 0)
                 error = $"{_registry.ScanErrors.Count} file(s) skipped. First: {_registry.ScanErrors[0]}";
-            await ShowFontToastIfNeeded();
+            ShowFontToastIfNeeded();
         }
         catch (Exception ex) { error = ex.Message; }
         finally { loading = false; StateHasChanged(); }
@@ -1748,6 +1738,5 @@
     {
         _selfRef?.Dispose();
         _registry.Dispose();
-        _toastCts?.Cancel();
     }
 }
