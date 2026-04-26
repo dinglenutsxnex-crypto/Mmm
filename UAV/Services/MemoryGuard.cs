@@ -16,7 +16,7 @@ public static class MemoryGuard
     /// 800 MB is a safe default — adjust lower (e.g. 400 MB) on
     /// devices you know have limited RAM.
     /// </summary>
-    public const long ThresholdBytes = 800L * 1024 * 1024; // 800 MB
+    public const long ThresholdBytes = 400L * 1024 * 1024; // 800 MB
 
     /// <summary>
     /// Returns the best estimate of currently available (free) device RAM in bytes.
