@@ -40,8 +40,6 @@
         <MauiIcon Include="Platforms\Windows\appicon.png" />
         <!-- iOS icon via XCAsset -->
         <BundleResource Include="Platforms\iOS\Resources\AppIcon.appiconset\**" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'" />
-        <!-- Android mipmap icons -->
-        <AndroidResource Include="Platforms\Android\Resources\mipmap-**\*" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'" />
 
         <!-- Splash Screen -->
         <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#1e1e1e" BaseSize="128,128" />
