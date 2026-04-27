@@ -40,7 +40,7 @@
 
     /* ── Nav ── */
     .bi-nav {
-        height: 45px;
+        height: 34px;
         background: var(--header);
         border-bottom: 1px solid var(--border);
         display: flex;
@@ -790,7 +790,6 @@
     <!-- ═══════════ NAV BAR ═══════════ -->
     <div class="bi-nav">
         <div class="bi-nav-title">
-            <i class="fa-brands fa-unity" style="color:#fff; font-size:16px; -webkit-text-fill-color:#fff;"></i>
             <span class="gradient-text">UAV</span>
         </div>
 
@@ -877,9 +876,9 @@
             </div>
 
             <!-- ABOUT -->
-            <a href="/credits" class="bi-btn" title="About">
-                <i class="fa-solid fa-circle-info"></i> About
-            </a>
+            <button class="bi-btn" title="About" @onclick="@(() => JS.InvokeVoidAsync("open", "/credits", "_blank"))">
+                <i class="fa-solid fa-circle-info"></i>
+            </button>
 
             @if (!string.IsNullOrEmpty(bundleFileName))
             {
@@ -965,7 +964,12 @@
         <!-- INSPECTOR PANEL -->
         <div class="bi-inspector-panel">
             <div class="bi-inspector-header">
-                <button class="bi-tab active">Inspector</button>
+                <button class="bi-tab @(_inspectMode == "preview" ? "active" : "")" @onclick="@(() => _inspectMode = "preview")">
+                    <i class="fa-solid fa-eye"></i> Preview
+                </button>
+                <button class="bi-tab @(_inspectMode == "fields" ? "active" : "")" @onclick="@(() => _inspectMode = "fields")">
+                    <i class="fa-solid fa-list"></i> Fields
+                </button>
             </div>
             <div class="bi-inspector-body">
                 @if (selectedDesc == null)
@@ -977,26 +981,33 @@
                     <div class="asset-title">@(string.IsNullOrEmpty(selectedDesc.Value.Name) ? "(unnamed)" : selectedDesc.Value.Name)</div>
                     <div class="asset-subtitle">@selectedDesc.Value.Type · PathID @selectedDesc.Value.PathId · @FormatSize(selectedDesc.Value.ByteSize)</div>
 
-                    @if (selectedDesc.Value.Type == "Texture2D" || selectedDesc.Value.Type == "Sprite")
+                    @if (_inspectMode == "preview")
                     {
-                        <div class="field-header">Preview</div>
-                        <TexturePreview Result="textureResult" Loading="textureLoading" AssetName="@selectedDesc.Value.Name" />
+                        @if (selectedDesc.Value.Type == "Texture2D" || selectedDesc.Value.Type == "Sprite")
+                        {
+                            <div class="field-header">Preview</div>
+                            <TexturePreview Result="textureResult" Loading="textureLoading" AssetName="@selectedDesc.Value.Name" />
+                        }
+
+                        @if (selectedDesc.Value.Type == "Mesh")
+                        {
+                            <div class="field-header">Preview</div>
+                            <MeshPreview MeshData="meshResult" Loading="meshLoading" AssetName="@selectedDesc.Value.Name" RawFields="inspectorFields" />
+                        }
                     }
 
-                    @if (selectedDesc.Value.Type == "Mesh")
-                    {
-                        <div class="field-header">Preview</div>
-                        <MeshPreview MeshData="meshResult" Loading="meshLoading" AssetName="@selectedDesc.Value.Name" RawFields="inspectorFields" />
-                    }
-
-                    @if (inspectorFields != null)
+                    @if (_inspectMode == "fields" && inspectorFields != null)
                     {
                         <div class="field-header">Fields</div>
                         @RenderFields(inspectorFields)
                     }
-                    else if (inspectorLoading)
+                    else if (inspectorLoading && _inspectMode == "fields")
                     {
                         <div class="bi-loading"><div class="spinner"></div> Parsing fields...</div>
+                    }
+                    @if (_inspectMode == "preview" && selectedDesc.Value.Type != "Texture2D" && selectedDesc.Value.Type != "Sprite" && selectedDesc.Value.Type != "Mesh")
+                    {
+                        <div class="bi-inspector-body"><div class="bi-empty">Preview not available for @selectedDesc.Value.Type</div></div>
                     }
                 }
             </div>
@@ -1095,6 +1106,11 @@
     bool textureLoading;
     MeshParseResult? meshResult;
     bool meshLoading;
+
+    // Texture cancellation
+    System.Threading.CancellationTokenSource? _texCts;
+    int _currentTexId;
+    string _inspectMode = "preview"; // "preview" or "fields"
 
     // Available types for filter dropdown (rebuilt when registry changes)
     IReadOnlyList<string> AvailableTypes =>
@@ -1327,10 +1343,16 @@
         if (_lastOpenSlot >= 0 && _lastOpenSlot != desc.BundleSlot)
             _registry.ReleaseSlot(_lastOpenSlot);
 
+        _texCts?.Cancel();
+        _texCts?.Dispose();
+        _texCts = new System.Threading.CancellationTokenSource();
+        int thisTexId = ++_currentTexId;
+
         selectedDesc = desc;
         inspectorFields = null; textureResult = null; meshResult = null;
+        _inspectMode = (desc.Type == "Texture2D" || desc.Type == "Sprite" || desc.Type == "Mesh") ? "preview" : "fields";
         inspectorLoading = true; textureLoading = true; meshLoading = desc.Type == "Mesh";
-        StateHasChanged();
+        await InvokeAsync(() => StateHasChanged());
 
         AssetTypeValueField? localFields = null;
         TextureDecodeResult? localTex    = null;
@@ -1339,7 +1361,7 @@
         try
         {
             var af = await _registry.GetLiveFileAsync(desc);
-            if (af == null) { inspectorLoading = false; textureLoading = false; meshLoading = false; return; }
+            if (af == null) { inspectorLoading = false; textureLoading = false; meshLoading = false; await InvokeAsync(() => StateHasChanged()); return; }
             _lastOpenSlot = desc.BundleSlot;
 
             await Task.Run(() =>
@@ -1353,17 +1375,84 @@
                 localFields = mgr.GetBaseField(af, info);
 
                 if (desc.Type is "Texture2D" or "Sprite")
-                    localTex = DecodeTextureFields(localFields, af);
+                {
+                    int width = localFields["m_Width"]?.AsInt ?? 0;
+                    int height = localFields["m_Height"]?.AsInt ?? 0;
+
+                    int maxScale = 1;
+                    if (width >= 512 || height >= 512) maxScale = 8;
+                    else if (width >= 256 || height >= 256) maxScale = 4;
+                    else if (width >= 128 || height >= 128) maxScale = 2;
+
+                    localTex = DecodeTextureFields(localFields, af, maxScale);
+                    if (_texCts.IsCancellationRequested || thisTexId != _currentTexId) return;
+
+                    InvokeAsync(() =>
+                    {
+                        if (thisTexId == _currentTexId)
+                        {
+                            textureResult = localTex;
+                            textureLoading = false;
+                            StateHasChanged();
+                        }
+                    });
+
+                    if (maxScale >= 4 && !_texCts.IsCancellationRequested && thisTexId == _currentTexId)
+                    {
+                        var med = DecodeTextureFields(localFields, af, maxScale / 2);
+                        if (_texCts.IsCancellationRequested || thisTexId != _currentTexId) return;
+
+                        InvokeAsync(() =>
+                        {
+                            if (thisTexId == _currentTexId)
+                            {
+                                textureResult = med;
+                                StateHasChanged();
+                            }
+                        });
+                    }
+
+                    if (maxScale > 1 && !_texCts.IsCancellationRequested && thisTexId == _currentTexId)
+                    {
+                        var full = DecodeTextureFields(localFields, af, 1);
+                        if (_texCts.IsCancellationRequested || thisTexId != _currentTexId) return;
+
+                        InvokeAsync(() =>
+                        {
+                            if (thisTexId == _currentTexId)
+                            {
+                                textureResult = full;
+                                StateHasChanged();
+                            }
+                        });
+                    }
+                }
                 else if (desc.Type == "Mesh")
+                {
                     localMesh = MeshParser.Parse(localFields, af, info);
+                    if (!_texCts.IsCancellationRequested && thisTexId == _currentTexId)
+                    {
+                        InvokeAsync(() =>
+                        {
+                            if (thisTexId == _currentTexId)
+                            {
+                                meshResult = localMesh;
+                                meshLoading = false;
+                                StateHasChanged();
+                            }
+                        });
+                    }
+                }
             });
 
-            inspectorFields = localFields;
-            textureResult   = localTex;
-            meshResult      = localMesh;
+            if (!_texCts.IsCancellationRequested && thisTexId == _currentTexId)
+            {
+                inspectorFields = localFields;
+                if (desc.Type != "Mesh") meshResult = localMesh;
+            }
         }
         catch (Exception ex) { error = ex.Message; }
-        finally { inspectorLoading = false; textureLoading = false; meshLoading = false; StateHasChanged(); }
+        finally { inspectorLoading = false; textureLoading = false; meshLoading = false; await InvokeAsync(() => StateHasChanged()); }
     }
 
     // ── Context menu ────────────────────────────────────────────────────────
@@ -1562,7 +1651,7 @@
     }
 
     // ── Texture decode ───────────────────────────────────────────────────────
-    TextureDecodeResult? DecodeTextureFields(AssetTypeValueField fields, AssetsFileInstance afInst)
+    TextureDecodeResult? DecodeTextureFields(AssetTypeValueField fields, AssetsFileInstance afInst, int scaleDiv = 1)
     {
         try
         {
@@ -1606,8 +1695,8 @@
 
             try
             {
-                var decoded = BareIronTextureDecoder.Decode(imageData, width, height, af);
-                return new TextureDecodeResult { RgbaData = decoded, Width = width, Height = height, FormatId = af, FormatName = GetFormatName(format), SwapRB = false };
+                var decoded = BareIronTextureDecoder.Decode(imageData, width, height, af, false, scaleDiv);
+                return new TextureDecodeResult { RgbaData = decoded, Width = width / scaleDiv, Height = height / scaleDiv, FormatId = af, FormatName = GetFormatName(format), SwapRB = false };
             }
             catch (Exception decEx)
             {

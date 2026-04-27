@@ -18,7 +18,7 @@ else
             <div class="preview-info">
                 @MeshData.VertexCount verts · @MeshData.TriangleCount tris · @MeshData.SubMeshCount submesh(es)
             </div>
-            <canvas id="meshCanvas_@_id" class="mesh-canvas" width="480" height="320"></canvas>
+            <canvas id="meshCanvas_@_id" class="mesh-canvas"></canvas>
             <div class="mesh-controls">
                 <span class="mesh-hint">drag to rotate · scroll to zoom</span>
             </div>
@@ -29,7 +29,7 @@ else
 <style>
     .mesh-preview { margin-top: 8px; }
     .mesh-canvas {
-        width: 100%; max-width: 480px; height: 320px;
+        width: 100%; max-width: 640px; height: 480px;
         border: 1px solid #333; border-radius: 4px;
         background: #1a1a1a; display: block; cursor: grab;
     }

@@ -6,6 +6,10 @@ window.MeshViewer = (() => {
         const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
         if (!gl) { console.warn('[MeshViewer] WebGL not supported'); return; }
 
+        // Set fixed canvas size that fits well
+        canvas.width = 640;
+        canvas.height = 480;
+
         const ext32 = gl.getExtension('OES_element_index_uint');
         const useUint32 = !!ext32;
 
@@ -152,7 +156,7 @@ window.MeshViewer = (() => {
         });
         canvas.addEventListener('wheel', e => {
             e.preventDefault();
-            dist = Math.max(1.5, Math.min(10, dist + e.deltaY*0.005));
+            dist = Math.max(0.5, dist + e.deltaY*0.005);
             render();
         }, { passive: false });
 
@@ -171,7 +175,7 @@ window.MeshViewer = (() => {
                 render();
             } else if (e.touches.length===2) {
                 const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-                dist=Math.max(1.5,Math.min(10,dist-(d-lastTouchDist)*0.01));
+                dist=Math.max(0.5,dist-(d-lastTouchDist)*0.01);
                 lastTouchDist=d; render();
             }
         }, { passive: false });

@@ -21,8 +21,16 @@ public class TextureDecodeResult
 
 public static class BareIronTextureDecoder
 {
-    public static byte[] Decode(byte[] data, int width, int height, int format, bool swapRB = false)
+    public static byte[] Decode(byte[] data, int width, int height, int format, bool swapRB = false, int scaleDiv = 1)
     {
+        if (scaleDiv > 1)
+        {
+            int newW = Math.Max(1, width / scaleDiv);
+            int newH = Math.Max(1, height / scaleDiv);
+            var full = Decode(data, width, height, format, swapRB, 1);
+            return DownScale(full, width, height, newW, newH);
+        }
+
         format = GuessActualFormat(data, width, height, format);
 
         int expectedCompressed = GetExpectedCompressedSize(width, height, format);
@@ -83,6 +91,29 @@ public static class BareIronTextureDecoder
         {
             ArrayPool<byte>.Shared.Return(row);
         }
+    }
+
+    private static byte[] DownScale(byte[] src, int srcW, int srcH, int dstW, int dstH)
+    {
+        var dst = new byte[dstW * dstH * 4];
+        float xRatio = (float)srcW / dstW;
+        float yRatio = (float)srcH / dstH;
+
+        for (int y = 0; y < dstH; y++)
+        {
+            int srcY = (int)(y * yRatio);
+            for (int x = 0; x < dstW; x++)
+            {
+                int srcX = (int)(x * xRatio);
+                int srcIdx = (srcY * srcW + srcX) * 4;
+                int dstIdx = (y * dstW + x) * 4;
+                dst[dstIdx] = src[srcIdx];
+                dst[dstIdx + 1] = src[srcIdx + 1];
+                dst[dstIdx + 2] = src[srcIdx + 2];
+                dst[dstIdx + 3] = src[srcIdx + 3];
+            }
+        }
+        return dst;
     }
 
     private static int GuessActualFormat(byte[] data, int w, int h, int reported)

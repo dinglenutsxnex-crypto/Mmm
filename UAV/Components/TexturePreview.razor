@@ -5,7 +5,7 @@
 {
     <div class="texture-preview">
         <div class="preview-info">@Result.Width x @Result.Height @(Result.FormatId > 0 ? $"[{Result.FormatName} #{Result.FormatId}]" : "")</div>
-        <img src="@ImageDataUrl" alt="Texture Preview" style="max-width:100%;" />
+        <img src="@ImageDataUrl" alt="Texture Preview" style="max-width:100%; border:1px solid #555;" />
     </div>
 }
 else if (!string.IsNullOrEmpty(Result?.Error))
