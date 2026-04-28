@@ -21,56 +21,52 @@ public class TextureDecodeResult
 
 public static class BareIronTextureDecoder
 {
-    public static byte[] Decode(byte[] data, int width, int height, int format, bool swapRB = false, int scaleDiv = 1)
+public static byte[] Decode(byte[] data, int width, int height, int format, bool swapRB = false, int scaleDiv = 1)
+{
+    // Calculate target dimensions for direct decoding
+    int targetWidth = Math.Max(1, width / scaleDiv);
+    int targetHeight = Math.Max(1, height / scaleDiv);
+
+    format = GuessActualFormat(data, width, height, format);
+
+    int expectedCompressed = GetExpectedCompressedSize(width, height, format);
+    if (data.Length > expectedCompressed)
+        data = data[..expectedCompressed];
+
+    System.Diagnostics.Debug.WriteLine($"[Decoder] Format={format} ({GetFormatName(format)}) | {width}x{height} -> {targetWidth}x{targetHeight}");
+
+    byte[] output = null;
+    bool success = format switch
     {
-        if (scaleDiv > 1)
-        {
-            int newW = Math.Max(1, width / scaleDiv);
-            int newH = Math.Max(1, height / scaleDiv);
-            var full = Decode(data, width, height, format, swapRB, 1);
-            return DownScale(full, width, height, newW, newH);
-        }
+        3 => DecodeRGB24(data, targetWidth, targetHeight, out output),
+        4 => DecodeRGBA32(data, targetWidth, targetHeight, out output),
+        5 => DecodeARGB32(data, targetWidth, targetHeight, out output),
+        13 => DecodeBGRA32(data, targetWidth, targetHeight, out output),
+        7 => DecodeDXT1(data, targetWidth, targetHeight, out output),
+        10 => DecodeDXT5(data, targetWidth, targetHeight, out output),
+        34 => DecodeBC6H(data, targetWidth, targetHeight, out output),
+        45 => DecodeETC(data, targetWidth, targetHeight, out output),
+        46 => DecodeETC(data, targetWidth, targetHeight, out output),
+        47 => DecodeETC2(data, targetWidth, targetHeight, out output),
+        48 => DecodeETC2A1(data, targetWidth, targetHeight, out output),
+        49 => DecodeETC2A8(data, targetWidth, targetHeight, out output),
+        52 => DecodeBC4(data, targetWidth, targetHeight, out output),
+        53 => DecodeBC5(data, targetWidth, targetHeight, out output),
+        54 => DecodeBC6H(data, targetWidth, targetHeight, out output),
+        55 => DecodeBC7(data, targetWidth, targetHeight, out output),
+        62 => DecodeBC4(data, targetWidth, targetHeight, out output),
+        63 => DecodeBC5(data, targetWidth, targetHeight, out output),
+        74 => DecodeASTC(data, targetWidth, targetHeight, 4, 4, out output),
+        77 => DecodeASTC(data, targetWidth, targetHeight, 8, 8, out output),
+        _ => throw new NotSupportedException($"Format {format} not supported")
+    };
 
-        format = GuessActualFormat(data, width, height, format);
+    if (!success || output == null)
+        throw new Exception($"Decode failed for format {format}");
 
-        int expectedCompressed = GetExpectedCompressedSize(width, height, format);
-        if (data.Length > expectedCompressed)
-            data = data[..expectedCompressed];
-
-        System.Diagnostics.Debug.WriteLine($"[Decoder] Format={format} ({GetFormatName(format)}) | {width}x{height}");
-
-        byte[] output = null;
-        bool success = format switch
-        {
-            3 => DecodeRGB24(data, width, height, out output),
-            4 => DecodeRGBA32(data, width, height, out output),
-            5 => DecodeARGB32(data, width, height, out output),
-            13 => DecodeBGRA32(data, width, height, out output),
-            7 => DecodeDXT1(data, width, height, out output),
-            10 => DecodeDXT5(data, width, height, out output),
-            34 => DecodeBC6H(data, width, height, out output),
-            45 => DecodeETC(data, width, height, out output),
-            46 => DecodeETC(data, width, height, out output),
-            47 => DecodeETC2(data, width, height, out output),
-            48 => DecodeETC2A1(data, width, height, out output),
-            49 => DecodeETC2A8(data, width, height, out output),
-            52 => DecodeBC4(data, width, height, out output),
-            53 => DecodeBC5(data, width, height, out output),
-            54 => DecodeBC6H(data, width, height, out output),
-            55 => DecodeBC7(data, width, height, out output),
-            62 => DecodeBC4(data, width, height, out output),
-            63 => DecodeBC5(data, width, height, out output),
-            74 => DecodeASTC(data, width, height, 4, 4, out output),
-            77 => DecodeASTC(data, width, height, 8, 8, out output),
-            _ => throw new NotSupportedException($"Format {format} not supported")
-        };
-
-        if (!success || output == null)
-            throw new Exception($"Decode failed for format {format}");
-
-        FlipVertically(output, width, height);
-        return output;
-    }
+    FlipVertically(output, targetWidth, targetHeight);
+    return output;
+}
 
     private static void FlipVertically(byte[] data, int w, int h)
     {
@@ -183,38 +179,65 @@ public static class BareIronTextureDecoder
         return true;
     }
 
-    private static bool DecodeRGBA32(byte[] input, int w, int h, out byte[] output)
+private static bool DecodeRGBA32(byte[] input, int w, int h, out byte[] output)
+{
+    output = new byte[w * h * 4];
+    int pixelsToCopy = Math.Min(w * h, input.Length / 4);
+    for (int i = 0; i < pixelsToCopy; i++)
     {
-        output = new byte[w * h * 4];
-        Array.Copy(input, output, Math.Min(input.Length, output.Length));
-        return true;
+        Array.Copy(input, i * 4, output, i * 4, 4);
     }
+    // Fill remaining pixels with zeros if input was smaller than expected
+    for (int i = pixelsToCopy * 4; i < output.Length; i++)
+    {
+        output[i] = 0;
+    }
+    return true;
+}
 
-    private static bool DecodeARGB32(byte[] input, int w, int h, out byte[] output)
+private static bool DecodeARGB32(byte[] input, int w, int h, out byte[] output)
+{
+    output = new byte[w * h * 4];
+    int pixelsToCopy = Math.Min(w * h, input.Length / 4);
+    for (int i = 0; i < pixelsToCopy; i++)
     {
-        output = new byte[w * h * 4];
-        for (int i = 0; i < w * h; i++)
-        {
-            output[i * 4] = input[i * 4 + 1];
-            output[i * 4 + 1] = input[i * 4 + 2];
-            output[i * 4 + 2] = input[i * 4 + 3];
-            output[i * 4 + 3] = input[i * 4];
-        }
-        return true;
+        output[i * 4] = input[i * 4 + 1];
+        output[i * 4 + 1] = input[i * 4 + 2];
+        output[i * 4 + 2] = input[i * 4 + 3];
+        output[i * 4 + 3] = input[i * 4];
     }
+    // Fill remaining pixels with zeros if input was smaller than expected
+    for (int i = pixelsToCopy * 4; i < output.Length; i += 4)
+    {
+        output[i] = 0;     // R
+        output[i + 1] = 0; // G
+        output[i + 2] = 0; // B
+        output[i + 3] = 255; // A (opaque)
+    }
+    return true;
+}
 
-    private static bool DecodeBGRA32(byte[] input, int w, int h, out byte[] output)
+private static bool DecodeBGRA32(byte[] input, int w, int h, out byte[] output)
+{
+    output = new byte[w * h * 4];
+    int pixelsToCopy = Math.Min(w * h, input.Length / 4);
+    for (int i = 0; i < pixelsToCopy; i++)
     {
-        output = new byte[w * h * 4];
-        for (int i = 0; i < w * h; i++)
-        {
-            output[i * 4] = input[i * 4 + 2];
-            output[i * 4 + 1] = input[i * 4 + 1];
-            output[i * 4 + 2] = input[i * 4];
-            output[i * 4 + 3] = input[i * 4 + 3];
-        }
-        return true;
+        output[i * 4] = input[i * 4 + 2];
+        output[i * 4 + 1] = input[i * 4 + 1];
+        output[i * 4 + 2] = input[i * 4];
+        output[i * 4 + 3] = input[i * 4 + 3];
     }
+    // Fill remaining pixels with zeros if input was smaller than expected
+    for (int i = pixelsToCopy * 4; i < output.Length; i += 4)
+    {
+        output[i] = 0;     // R
+        output[i + 1] = 0; // G
+        output[i + 2] = 0; // B
+        output[i + 3] = 255; // A (opaque)
+    }
+    return true;
+}
 
     private static bool DecodeDXT1(byte[] data, int w, int h, out byte[] output)
     {
